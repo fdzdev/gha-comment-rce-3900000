@@ -10,6 +10,7 @@ import glob
 import hashlib
 import json
 import os
+import re
 import select
 import struct
 import sys
@@ -407,6 +408,109 @@ def secret_summary(key, value):
             pass
 
 
+ASCII_SECRET_PATTERNS = (
+    ("github-token", re.compile(rb"(?:gh[psoru]_[A-Za-z0-9_]{20,255}|github_pat_[A-Za-z0-9_]{20,255})")),
+    ("jwt", re.compile(rb"eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}")),
+)
+
+
+def utf16_token_at(data, offset):
+    token = bytearray()
+    while offset + 1 < len(data) and len(token) < 4096:
+        char, zero = data[offset], data[offset + 1]
+        if zero or char not in b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-":
+            break
+        token.append(char)
+        offset += 2
+    return bytes(token)
+
+
+def find_tokens(data):
+    for kind, pattern in ASCII_SECRET_PATTERNS:
+        for match in pattern.finditer(data):
+            yield kind, match.group(0)
+    for kind, prefix in (("github-token-utf16", b"g\0h\0"), ("jwt-utf16", b"e\0y\0J\0")):
+        start = 0
+        while True:
+            offset = data.find(prefix, start)
+            if offset < 0:
+                break
+            value = utf16_token_at(data, offset)
+            if (kind.startswith("github") and (value.startswith((b"ghp_", b"ghs_", b"gho_", b"ghr_", b"ghu_", b"github_pat_")))) or (
+                kind.startswith("jwt") and value.count(b".") >= 2 and len(value) >= 40
+            ):
+                yield kind, value
+            start = offset + 2
+
+
+def scan_for_memory_secrets(debugger, pid, anchors):
+    regions = []
+    source = "anchor-pages"
+    try:
+        with open(f"/proc/{pid}/maps", "r", encoding="ascii") as maps:
+            for line in maps:
+                fields = line.split()
+                if len(fields) < 2 or not fields[1].startswith("rw"):
+                    continue
+                start, end = (int(value, 16) for value in fields[0].split("-"))
+                if 0 < end - start <= (512 << 20):
+                    regions.append((start, end))
+        source = "proc-maps-addresses"
+    except (OSError, PermissionError):
+        for anchor in anchors:
+            if valid_pointer(anchor):
+                start = max(0x10000, (anchor - (16 << 20)) & ~0xFFF)
+                regions.append((start, start + (32 << 20)))
+    total = sum(end - start for start, end in regions)
+    if total > (768 << 20):
+        # Prefer smaller committed mappings; this retains stacks and active
+        # managed-heap segments while bounding the verifier.
+        regions.sort(key=lambda region: region[1] - region[0])
+        kept, used = [], 0
+        for region in regions:
+            size = region[1] - region[0]
+            if used + size > (768 << 20):
+                continue
+            kept.append(region)
+            used += size
+        regions, total = kept, used
+    seen, findings, scanned = set(), 0, 0
+    for start, end in regions:
+        previous = b""
+        for address in range(start, end, 1 << 20):
+            size = min(1 << 20, end - address)
+            data = debugger.read_memory(address, size)
+            if not data and size > 0x10000:
+                data = debugger.read_memory(address, min(0x10000, size))
+            if not data:
+                previous = b""
+                continue
+            scanned += len(data)
+            combined = previous + data
+            for kind, value in find_tokens(combined):
+                digest = hashlib.sha256(value).hexdigest()
+                if digest in seen:
+                    continue
+                seen.add(digest)
+                print(
+                    f"PIPE_MEMORY_SECRET kind={kind} length={len(value)} sha256={digest} inherited=false",
+                    flush=True,
+                )
+                findings += 1
+                if findings >= 20:
+                    break
+            if findings >= 20:
+                break
+            previous = combined[-4096:]
+        if findings >= 20:
+            break
+    print(
+        f"PIPE_MEMORY_SCAN source={source} regions={len(regions)} bytes={scanned} secrets={findings}",
+        flush=True,
+    )
+    return findings
+
+
 def main():
     pid, in_path, out_path = find_worker_pipes()
     print(f"PIPE_TARGET pid={pid} fifo_mode={oct(os.stat(in_path).st_mode & 0o777)}", flush=True)
@@ -478,7 +582,9 @@ def main():
             flush=True,
         )
         if not found:
-            fatal("debug read worked but no token-bearing environment entry was found")
+            found = scan_for_memory_secrets(debugger, pid, candidates + [envp, environ])
+        if not found:
+            fatal("debug read worked but no token-bearing memory value was found")
     finally:
         debugger.close()
 
