@@ -1,0 +1,19 @@
+name: Issue comment expression-injection lab
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+
+jobs:
+  reproduce:
+    if: github.event.issue.number == 1
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Vulnerable expression interpolation
+        run: |
+          BODY="${{ github.event.comment.body }}"
+          echo "$BODY"
