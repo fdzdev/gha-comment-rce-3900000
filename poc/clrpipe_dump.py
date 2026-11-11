@@ -25,6 +25,19 @@ GET_DCB = 9
 HEADER_SIZE = 48
 MAX_MESSAGE = 1 << 20
 MAX_ELF_SCAN = 0x2000000
+POINTER_DYNAMIC_TAGS = {
+    3,  # DT_PLTGOT
+    4,  # DT_HASH
+    5,  # DT_STRTAB
+    6,  # DT_SYMTAB
+    7,  # DT_RELA
+    17,  # DT_REL
+    21,  # DT_DEBUG
+    23,  # DT_JMPREL
+    25,  # DT_INIT_ARRAY
+    26,  # DT_FINI_ARRAY
+    0x6FFFFEF5,  # DT_GNU_HASH
+}
 
 
 def fatal(message):
@@ -174,7 +187,7 @@ def dynamic_tags(debugger, base):
         tag, value = struct.unpack("<QQ", entry)
         if tag == 0:
             break
-        if tag not in (2, 10, 18, 19, 20, 27, 28) and value and value < base:
+        if tag in POINTER_DYNAMIC_TAGS and value and value < base:
             value += base
         tags.setdefault(tag, value)
     return tags
@@ -291,6 +304,69 @@ def find_symbol(debugger, base, name):
     return 0
 
 
+def relocation_tables(tags):
+    tables = []
+    if tags.get(23) and tags.get(2):
+        # DT_PLTREL uses the DT_RELA/DT_REL tag number as its discriminator.
+        tables.append((tags[23], tags[2], 24 if tags.get(20) == 7 else 16))
+    if tags.get(7) and tags.get(8):
+        tables.append((tags[7], tags[8], tags.get(9, 24)))
+    if tags.get(17) and tags.get(18):
+        tables.append((tags[17], tags[18], tags.get(19, 16)))
+    return tables
+
+
+def find_libc_from_relocations(debugger, object_base):
+    tags = dynamic_tags(debugger, object_base)
+    symtab, strtab = tags.get(6, 0), tags.get(5, 0)
+    if not valid_pointer(symtab) or not valid_pointer(strtab):
+        return 0, 0
+    likely_libc = {
+        b"malloc", b"calloc", b"realloc", b"free", b"getenv", b"setenv",
+        b"memcpy", b"memmove", b"read", b"write", b"open", b"close",
+        b"pthread_create", b"pthread_mutex_lock", b"dlopen", b"dlsym",
+    }
+    tested_bases = set()
+    for table, table_size, entry_size in relocation_tables(tags):
+        if entry_size < 16:
+            continue
+        count = min(table_size // entry_size, 65536)
+        for index in range(count):
+            relocation = debugger.read_memory(table + index * entry_size, entry_size)
+            if len(relocation) != entry_size:
+                break
+            offset, info = struct.unpack_from("<QQ", relocation)
+            symbol_index = info >> 32
+            if not symbol_index:
+                continue
+            symbol = debugger.read_memory(symtab + symbol_index * 24, 24)
+            if len(symbol) != 24:
+                continue
+            symbol_name = read_c_string(debugger, strtab + u32(symbol), 96)
+            if symbol_name not in likely_libc:
+                continue
+            if offset < object_base:
+                offset += object_base
+            slot = debugger.read_memory(offset, 8)
+            target = u64(slot) if len(slot) == 8 else 0
+            if not valid_pointer(target):
+                continue
+            target_base = find_elf_base(debugger, target)
+            if not target_base or target_base == object_base or target_base in tested_bases:
+                continue
+            tested_bases.add(target_base)
+            print(
+                f"PIPE_IMPORT symbol={symbol_name.decode()} target_elf=0x{target_base:x}",
+                flush=True,
+            )
+            environ = find_symbol(debugger, target_base, b"__environ")
+            if not environ:
+                environ = find_symbol(debugger, target_base, b"environ")
+            if environ:
+                return target_base, environ
+    return 0, 0
+
+
 def find_worker_pipes():
     inputs = []
     for path in glob.glob("/tmp/clr-debug-pipe-*-*-in"):
@@ -349,14 +425,14 @@ def main():
             fatal("could not recover a loaded ELF base from the DCB")
         link_map = link_map_from_object(debugger, object_base)
         print(f"PIPE_ELF base=0x{object_base:x} link_map=0x{link_map:x}", flush=True)
-        libc_base = find_libc(debugger, link_map)
-        if not libc_base:
-            fatal("could not locate libc through the dynamic linker map")
-        environ = find_symbol(debugger, libc_base, b"__environ")
-        if not environ:
+        libc_base = find_libc(debugger, link_map) if link_map else 0
+        environ = find_symbol(debugger, libc_base, b"__environ") if libc_base else 0
+        if not environ and libc_base:
             environ = find_symbol(debugger, libc_base, b"environ")
         if not environ:
-            fatal("could not locate libc environ symbol")
+            libc_base, environ = find_libc_from_relocations(debugger, object_base)
+        if not environ:
+            fatal("could not locate libc environ through link-map or relocations")
         pointer = debugger.read_memory(environ, 8)
         envp = u64(pointer) if len(pointer) == 8 else 0
         if not valid_pointer(envp):
