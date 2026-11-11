@@ -291,7 +291,7 @@ def find_worker_pipes():
             pid = int(os.path.basename(path).split("-")[3])
         except (IndexError, ValueError):
             continue
-        output = path[:-3] + "out"
+        output = path[:-3] + "-out"
         if os.path.exists(output):
             inputs.append((pid, path, output))
     if not inputs:
