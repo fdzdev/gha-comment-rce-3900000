@@ -539,6 +539,8 @@ def scan_for_memory_secrets(debugger, pid, anchors):
                     metadata = jwt_public_metadata(value)
                     if metadata:
                         print(f"PIPE_JWT_META claims={json.dumps(metadata, sort_keys=True)}", flush=True)
+                        if metadata.get("iss") == "github":
+                            validate_github_token(value)
                 findings += 1
                 if findings >= 20:
                     break
