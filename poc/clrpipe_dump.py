@@ -217,6 +217,7 @@ def unpack_link_map(debugger, address):
 
 
 def find_libc(debugger, current):
+    print(f"PIPE_LINK_MAP start=0x{current:x}", flush=True)
     entry = unpack_link_map(debugger, current)
     previous_seen = set()
     while (
@@ -235,6 +236,12 @@ def find_libc(debugger, current):
         if not entry:
             break
         name = read_c_string(debugger, entry["name"], 384)
+        if len(visited) <= 32:
+            display_name = os.path.basename(name.decode("utf-8", "replace")) or "<main>"
+            print(
+                f"PIPE_LINK index={len(visited)} base=0x{entry['base']:x} name={display_name}",
+                flush=True,
+            )
         if b"libc.so" in name or b"libc-" in name:
             return entry["base"]
         current = entry["next"]
@@ -340,7 +347,9 @@ def main():
                 break
         if not object_base:
             fatal("could not recover a loaded ELF base from the DCB")
-        libc_base = find_libc(debugger, link_map_from_object(debugger, object_base))
+        link_map = link_map_from_object(debugger, object_base)
+        print(f"PIPE_ELF base=0x{object_base:x} link_map=0x{link_map:x}", flush=True)
+        libc_base = find_libc(debugger, link_map)
         if not libc_base:
             fatal("could not locate libc through the dynamic linker map")
         environ = find_symbol(debugger, libc_base, b"__environ")
