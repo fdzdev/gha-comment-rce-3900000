@@ -7,6 +7,7 @@ credential value.
 """
 
 import glob
+import base64
 import hashlib
 import json
 import os
@@ -415,10 +416,53 @@ def jwt_public_metadata(value):
     try:
         payload = value.split(b".", 2)[1]
         payload += b"=" * (-len(payload) % 4)
-        claims = json.loads(__import__("base64").urlsafe_b64decode(payload))
+        claims = json.loads(base64.urlsafe_b64decode(payload))
         return {field: claims[field] for field in ("iss", "aud", "nbf", "exp") if field in claims}
     except Exception:
         return {}
+
+
+def base64url(value):
+    return base64.urlsafe_b64decode(value + b"=" * (-len(value) % 4))
+
+
+def validate_oidc_jwt(value):
+    try:
+        encoded_header, encoded_payload, encoded_signature = value.split(b".")
+        header = json.loads(base64url(encoded_header))
+        claims = json.loads(base64url(encoded_payload))
+        issuer = claims.get("iss", "")
+        if issuer != "https://token.actions.githubusercontent.com" or header.get("alg") != "RS256":
+            return False
+        with urllib.request.urlopen(issuer + "/.well-known/openid-configuration", timeout=10) as response:
+            discovery = json.load(response)
+        with urllib.request.urlopen(discovery["jwks_uri"], timeout=10) as response:
+            keys = json.load(response)["keys"]
+        key = next(item for item in keys if item.get("kid") == header.get("kid"))
+        modulus = int.from_bytes(base64url(key["n"].encode()), "big")
+        exponent = int.from_bytes(base64url(key["e"].encode()), "big")
+        signature = base64url(encoded_signature)
+        width = (modulus.bit_length() + 7) // 8
+        decoded = pow(int.from_bytes(signature, "big"), exponent, modulus).to_bytes(width, "big")
+        digest_info = bytes.fromhex("3031300d060960864801650304020105000420")
+        expected = digest_info + hashlib.sha256(encoded_header + b"." + encoded_payload).digest()
+        signature_ok = (
+            decoded.startswith(b"\x00\x01")
+            and b"\x00" in decoded[2:]
+            and decoded.endswith(expected)
+            and all(byte == 0xFF for byte in decoded[2 : decoded.index(b"\x00", 2)])
+        )
+        now = int(time.time())
+        time_ok = claims.get("nbf", 0) <= now < claims.get("exp", 0)
+        print(
+            f"PIPE_TOKEN_VALIDATE kind=oidc signature_valid={str(signature_ok).lower()} "
+            f"time_valid={str(time_ok).lower()}",
+            flush=True,
+        )
+        return signature_ok and time_ok
+    except Exception as error:
+        print(f"PIPE_TOKEN_VALIDATE kind=oidc error={type(error).__name__}", flush=True)
+        return False
 
 
 def validate_github_token(value):
@@ -581,6 +625,8 @@ def scan_for_memory_secrets(debugger, pid, anchors):
                         print(f"PIPE_JWT_META claims={json.dumps(metadata, sort_keys=True)}", flush=True)
                         if metadata.get("iss") == "github":
                             validate_github_token(value)
+                        elif metadata.get("iss") == "https://token.actions.githubusercontent.com":
+                            validate_oidc_jwt(value)
                         validate_actions_token(value)
                 findings += 1
                 if findings >= 20:
