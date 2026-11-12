@@ -1,0 +1,20 @@
+name: Capture hosted compute agent build
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  capture:
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    steps:
+      - name: Compress the hosted compute agent binary
+        run: gzip -9 -c /opt/hca/hosted-compute-agent > hosted-compute-agent.gz
+
+      - name: Publish the hosted compute agent binary
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: hosted-compute-agent
+          path: hosted-compute-agent.gz
