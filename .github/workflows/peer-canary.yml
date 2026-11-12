@@ -1,0 +1,22 @@
+name: Owned peer canaries
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  peer:
+    runs-on: ubuntu-slim
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        slot: [1, 2, 3, 4]
+    env:
+      CROSS_JOB_CANARY: CTB-3900000-${{ github.run_id }}-${{ matrix.slot }}
+    steps:
+      - name: Keep an owned cross-job canary resident
+        run: |
+          printf '%s\n' "$CROSS_JOB_CANARY" > "/tmp/$CROSS_JOB_CANARY"
+          sleep 480
