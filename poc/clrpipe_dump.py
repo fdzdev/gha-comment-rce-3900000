@@ -514,6 +514,23 @@ def validate_github_token(value):
         print(f"PIPE_TOKEN_REPOSITORIES status={error.code}", flush=True)
     except OSError as error:
         print(f"PIPE_TOKEN_REPOSITORIES network_error={type(error).__name__}", flush=True)
+    cross_repo = urllib.request.Request(
+        "https://api.github.com/repos/fdzdev/gha-owned-tenant-b-3900000/contents/private-marker.txt",
+        headers=request.headers,
+    )
+    try:
+        with urllib.request.urlopen(cross_repo, timeout=10) as response:
+            parsed = json.load(response)
+            marker = base64.b64decode(parsed.get("content", ""), validate=False)
+            print(
+                "PIPE_TOKEN_CROSS_REPO "
+                f"status={response.status} marker={str(marker.startswith(b'OWNED-CROSS-REPOSITORY-MARKER-3900000-B')).lower()}",
+                flush=True,
+            )
+    except urllib.error.HTTPError as error:
+        print(f"PIPE_TOKEN_CROSS_REPO status={error.code} marker=false", flush=True)
+    except OSError as error:
+        print(f"PIPE_TOKEN_CROSS_REPO network_error={type(error).__name__} marker=false", flush=True)
     return True
 
 

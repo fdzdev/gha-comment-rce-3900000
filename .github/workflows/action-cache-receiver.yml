@@ -1,0 +1,28 @@
+name: Owned action-cache receiver
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  receive:
+    runs-on: ubuntu-slim
+    strategy:
+      fail-fast: false
+      matrix:
+        slot: [1, 2, 3, 4]
+    steps:
+      - run: |
+          python3 - <<'PY'
+          import hashlib, json, os
+          path = "/opt/actionarchivecache/owned-canary-3900000"
+          present = os.path.isfile(path)
+          digest = hashlib.sha256(open(path, "rb").read()).hexdigest() if present else None
+          result = {"present": present, "sha256": digest}
+          open("action-cache-receiver.json", "w").write(json.dumps(result) + "\n")
+          PY
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: action-cache-receiver-${{ matrix.slot }}
+          path: action-cache-receiver.json
