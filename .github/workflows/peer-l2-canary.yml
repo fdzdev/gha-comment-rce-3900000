@@ -19,8 +19,18 @@ jobs:
       - name: Publish peer address
         run: |
           python3 - <<'PY'
-          import json, os, socket
+          import glob, json, os, socket, urllib.parse, urllib.request
 
+          hca = {}
+          for path in glob.glob("/proc/[0-9]*/environ"):
+              try:
+                  entries = open(path, "rb").read().split(b"\0")
+              except OSError:
+                  continue
+              current = dict(item.split(b"=", 1) for item in entries if b"=" in item)
+              if b"scheduler_api_url" in current:
+                  hca = current
+                  break
           route = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
           route.connect(("192.0.2.1", 9))
           address = route.getsockname()[0]
@@ -29,6 +39,10 @@ jobs:
               "canary": os.environ["L2_CANARY"],
               "ipv4": address,
               "mac": open("/sys/class/net/eth0/address").read().strip(),
+              "public_ip": urllib.request.urlopen("https://api.ipify.org").read().decode(),
+              "scheduler_host": urllib.parse.urlsplit(
+                  hca[b"scheduler_api_url"].decode()
+              ).hostname,
           }
           open("peer-l2-address.json", "w").write(json.dumps(result) + "\n")
           PY
