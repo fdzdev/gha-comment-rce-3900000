@@ -1,0 +1,89 @@
+name: Owned peer layer-2 canaries
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  peer:
+    runs-on: ubuntu-slim
+    timeout-minutes: 8
+    strategy:
+      fail-fast: false
+      matrix:
+        slot: [1, 2, 3, 4]
+    env:
+      L2_CANARY: L2-3900000-${{ github.run_id }}-${{ matrix.slot }}
+    steps:
+      - name: Publish peer address
+        run: |
+          python3 - <<'PY'
+          import json, os, socket
+
+          route = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+          route.connect(("192.0.2.1", 9))
+          address = route.getsockname()[0]
+          route.close()
+          result = {
+              "canary": os.environ["L2_CANARY"],
+              "ipv4": address,
+              "mac": open("/sys/class/net/eth0/address").read().strip(),
+          }
+          open("peer-l2-address.json", "w").write(json.dumps(result) + "\n")
+          PY
+
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: peer-l2-address-${{ matrix.slot }}
+          path: peer-l2-address.json
+
+      - name: Listen below the IP firewall
+        run: |
+          sudo --preserve-env=L2_CANARY python3 - <<'PY'
+          import http.server, json, os, select, socket, struct, threading, time
+
+          marker = os.environ["L2_CANARY"].encode()
+
+          class Handler(http.server.BaseHTTPRequestHandler):
+              def do_GET(self):
+                  body = marker + b"\n"
+                  self.send_response(200)
+                  self.send_header("Content-Length", str(len(body)))
+                  self.end_headers()
+                  self.wfile.write(body)
+              def log_message(self, *_):
+                  pass
+
+          server = http.server.ThreadingHTTPServer(("0.0.0.0", 39000), Handler)
+          threading.Thread(target=server.serve_forever, daemon=True).start()
+          raw = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(3))
+          raw.bind(("eth0", 0))
+          raw.setblocking(False)
+          matches = []
+          deadline = time.monotonic() + 300
+          while time.monotonic() < deadline:
+              ready, _, _ = select.select([raw], [], [], 0.25)
+              if not ready:
+                  continue
+              frame = raw.recv(65535)
+              if marker not in frame:
+                  continue
+              matches.append({
+                  "destination_mac": frame[0:6].hex(":"),
+                  "source_mac": frame[6:12].hex(":"),
+                  "ethertype": frame[12:14].hex(),
+                  "bytes": len(frame),
+              })
+              if len(matches) >= 16:
+                  break
+          server.shutdown()
+          result = {"matched_frames": matches}
+          open("peer-l2-result.json", "w").write(json.dumps(result) + "\n")
+          PY
+
+      - if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: peer-l2-result-${{ matrix.slot }}
+          path: peer-l2-result.json

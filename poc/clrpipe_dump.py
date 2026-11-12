@@ -417,7 +417,12 @@ def jwt_public_metadata(value):
         payload = value.split(b".", 2)[1]
         payload += b"=" * (-len(payload) % 4)
         claims = json.loads(base64.urlsafe_b64decode(payload))
-        return {field: claims[field] for field in ("iss", "aud", "nbf", "exp") if field in claims}
+        public_fields = (
+            "iss", "aud", "sub", "nbf", "exp", "repository",
+            "repository_owner", "ref", "workflow", "job_workflow_ref",
+            "runner_environment", "event_name", "actor",
+        )
+        return {field: claims[field] for field in public_fields if field in claims}
     except Exception:
         return {}
 
@@ -482,12 +487,34 @@ def validate_github_token(value):
                 f"rate_limit={response.headers.get('x-ratelimit-limit', '?')}",
                 flush=True,
             )
-            return response.status == 200
+            accepted = response.status == 200
     except urllib.error.HTTPError as error:
         print(f"PIPE_TOKEN_VALIDATE kind=github status={error.code}", flush=True)
+        accepted = False
     except OSError as error:
         print(f"PIPE_TOKEN_VALIDATE kind=github network_error={type(error).__name__}", flush=True)
-    return False
+        accepted = False
+    if not accepted:
+        return False
+    repositories = urllib.request.Request(
+        "https://api.github.com/installation/repositories?per_page=100",
+        headers=request.headers,
+    )
+    try:
+        with urllib.request.urlopen(repositories, timeout=10) as response:
+            parsed = json.load(response)
+            names = [item.get("full_name") for item in parsed.get("repositories", [])]
+            print(
+                "PIPE_TOKEN_REPOSITORIES "
+                f"status={response.status} total={parsed.get('total_count', '?')} "
+                f"current_present={str('fdzdev/gha-comment-rce-3900000' in names).lower()}",
+                flush=True,
+            )
+    except urllib.error.HTTPError as error:
+        print(f"PIPE_TOKEN_REPOSITORIES status={error.code}", flush=True)
+    except OSError as error:
+        print(f"PIPE_TOKEN_REPOSITORIES network_error={type(error).__name__}", flush=True)
+    return True
 
 
 def validate_actions_token(value):
