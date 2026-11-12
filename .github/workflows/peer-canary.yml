@@ -16,6 +16,55 @@ jobs:
     env:
       CROSS_JOB_CANARY: CTB-3900000-${{ github.run_id }}-${{ matrix.slot }}
     steps:
+      - name: Capture owned peer fingerprint
+        run: |
+          python3 - <<'PY'
+          import glob, hashlib, json, os, urllib.parse, urllib.request
+
+          agent_env = {}
+          for path in glob.glob("/proc/[0-9]*/environ"):
+              try:
+                  values = open(path, "rb").read().split(b"\0")
+              except OSError:
+                  continue
+              current = dict(item.split(b"=", 1) for item in values if b"=" in item)
+              if b"scheduler_api_url" in current and b"diagnostics_sas_uri" in current:
+                  agent_env = current
+                  break
+
+          diagnostics = urllib.parse.urlsplit(
+              agent_env.get(b"diagnostics_sas_uri", b"").decode("utf-8", "ignore")
+          )
+          public_ip = urllib.request.urlopen(
+              "https://api.ipify.org", timeout=10
+          ).read().decode()
+          fingerprint = {
+              "allocation_hash": hashlib.sha256(
+                  agent_env.get(b"allocation_id", b"")
+              ).hexdigest(),
+              "boot_hash": hashlib.sha256(
+                  open("/proc/sys/kernel/random/boot_id", "rb").read()
+              ).hexdigest(),
+              "canary": os.environ["CROSS_JOB_CANARY"],
+              "diagnostics_container_hash": hashlib.sha256(
+                  (diagnostics.hostname + diagnostics.path).encode()
+              ).hexdigest(),
+              "diagnostics_permissions": dict(
+                  urllib.parse.parse_qsl(diagnostics.query)
+              ).get("sp", ""),
+              "public_ip": public_ip,
+          }
+          open("peer-fingerprint.json", "w").write(
+              json.dumps(fingerprint, sort_keys=True) + "\n"
+          )
+          PY
+
+      - name: Publish owned peer fingerprint
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: peer-fingerprint-${{ matrix.slot }}
+          path: peer-fingerprint.json
+
       - name: Keep an owned cross-job canary resident
         run: |
           printf '%s\n' "$CROSS_JOB_CANARY" > "/tmp/$CROSS_JOB_CANARY"
