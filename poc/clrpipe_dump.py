@@ -530,7 +530,7 @@ def validate_actions_token(value):
 
 
 ASCII_SECRET_PATTERNS = (
-    ("github-token", re.compile(rb"(?:gh[psoru]_[A-Za-z0-9_]{20,255}|github_pat_[A-Za-z0-9_]{20,255})")),
+    ("github-token", re.compile(rb"(?:gh[psoru]_[A-Za-z0-9_.-]{20,4095}|github_pat_[A-Za-z0-9_.-]{20,4095})")),
     ("jwt", re.compile(rb"eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}")),
 )
 
@@ -617,7 +617,7 @@ def scan_for_memory_secrets(debugger, pid, anchors):
                     f"PIPE_MEMORY_SECRET kind={kind} length={len(value)} sha256={digest} inherited=false",
                     flush=True,
                 )
-                if kind == "github-token" and 30 <= len(value) <= 255:
+                if kind.startswith("github-token") and 30 <= len(value) <= 4095:
                     validate_github_token(value)
                 elif kind == "jwt":
                     metadata = jwt_public_metadata(value)

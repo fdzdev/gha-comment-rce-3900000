@@ -11,7 +11,7 @@ jobs:
   reproduce:
     if: github.event.issue.number == 1
     runs-on: ubuntu-slim
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
       - name: Capture current runner egress
         run: curl -fsS https://api.ipify.org > runner-egress.txt
