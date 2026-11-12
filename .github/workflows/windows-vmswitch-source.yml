@@ -1,0 +1,40 @@
+name: Windows VMSwitch source census
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  census:
+    runs-on: windows-2022
+    timeout-minutes: 8
+    steps:
+      - name: Collect unique VMSwitch component files
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path out | Out-Null
+          $records = @()
+          Get-ChildItem "$env:WINDIR" -Filter vmswitch.sys -File -Recurse -ErrorAction SilentlyContinue |
+            ForEach-Object {
+              $hash = (Get-FileHash -Algorithm SHA256 $_.FullName).Hash.ToLower()
+              $destination = "out/$hash.sys"
+              if (-not (Test-Path $destination)) {
+                Copy-Item $_.FullName $destination
+              }
+              $records += [pscustomobject]@{
+                hash = $hash
+                bytes = $_.Length
+                file_version = $_.VersionInfo.FileVersion
+                product_version = $_.VersionInfo.ProductVersion
+                last_write_utc = $_.LastWriteTimeUtc.ToString("o")
+                path = $_.FullName
+              }
+            }
+          $records | ConvertTo-Json -Depth 3 | Set-Content -Encoding utf8 out/census.json
+          $records | Sort-Object file_version, hash | Format-Table -AutoSize
+
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: windows-vmswitch-source
+          path: out
