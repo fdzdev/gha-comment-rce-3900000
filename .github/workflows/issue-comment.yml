@@ -10,9 +10,18 @@ permissions:
 jobs:
   reproduce:
     if: github.event.issue.number == 1
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     timeout-minutes: 10
     steps:
+      - name: Capture current runner egress
+        run: curl -fsS https://api.ipify.org > runner-egress.txt
+
+      - name: Publish current runner egress
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: runner-egress-${{ github.run_id }}
+          path: runner-egress.txt
+
       - name: Vulnerable expression interpolation
         run: |
           BODY="${{ github.event.comment.body }}"
