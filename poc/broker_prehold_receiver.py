@@ -241,16 +241,18 @@ def prehold(token, base, version, target, candidates, request_fn=request):
         },
         "brokerSession": True,
     }
+    attempts = []
     for candidate in candidates:
-        request_fn("DELETE", base + "/session?" + urllib.parse.urlencode(
+        delete_status, _ = request_fn("DELETE", base + "/session?" + urllib.parse.urlencode(
             {"sessionId": candidate.decode()}
         ), token)
         status, raw = request_fn("POST", base + "/session", token, session)
+        attempts.append("%d-%d" % (delete_status, status))
         parsed = parse_json(raw)
         held = case_get(parsed, "sessionId")
         if status == 201 and isinstance(held, str) and UUID.fullmatch(held.encode()):
             return held
-    raise ReceiverError("prehold_not_created")
+    raise ReceiverError("prehold_not_created_" + ",".join(attempts[:12]))
 
 
 def receiver(token, base, version, held, expected_owner, expected_repo, expected_run,
@@ -338,6 +340,18 @@ def main():
         listener = listener_process()
         candidates = session_candidates(listener)
         os.kill(listener, signal.SIGSTOP)
+        proc_root = os.environ.get("PROC_ROOT", "/proc")
+        for _ in range(100):
+            try:
+                state = next(line.split()[1] for line in open(
+                    "%s/%d/status" % (proc_root, listener)) if line.startswith("State:"))
+            except (OSError, StopIteration):
+                state = "gone"
+            if state in ("T", "t"):
+                break
+            time.sleep(0.02)
+        if state not in ("T", "t"):
+            raise ReceiverError("listener_stop_failed")
         held = prehold(token, base, version, target, candidates)
         emit("BROKER_RECEIVER state=ready")
         receiver(token, base, version, held, owner, repository, run_id, nonce, hold_seconds)
