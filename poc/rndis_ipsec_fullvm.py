@@ -155,15 +155,13 @@ def add_sa(operation, auth_id, auth_len, enc_id, enc_len, flags=0):
 
 def main():
     module = sys.argv[1]
-    guid, relid, rndis, request_id = resolve_rndis()
     params = ("get_address=0x%x send_address=0x%x put_address=0x%x "
-              "rndis_device=0x%x request_type=4 oid=0xfc01020d "
-              "input_length=0 arm=1" %
+              "extension_offset=0x150 request_type=4 oid=0xfc01020d "
+              "input_length=0" %
               (symbol("get_rndis_request", True),
                symbol("rndis_filter_send_request", True),
-               symbol("put_rndis_request", True), rndis)).encode()
-    print("IPSEC_PRE guid=%s relid=%u rndis=%x request_id=%u" %
-          (guid, relid, rndis, request_id), flush=True)
+               symbol("put_rndis_request", True))).encode()
+    print("IPSEC_PRE resolver=netdev_priv extension_offset=0x150", flush=True)
     fd = os.open(module, os.O_RDONLY)
     libc = ctypes.CDLL(None, use_errno=True)
     result = libc.syscall(313, fd, params, 0)

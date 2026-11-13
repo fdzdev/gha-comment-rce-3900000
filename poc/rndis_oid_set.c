@@ -3,8 +3,10 @@
 #include <linux/delay.h>
 #include <linux/module.h>
 #include <linux/moduleparam.h>
+#include <linux/netdevice.h>
 #include <linux/string.h>
 #include <linux/types.h>
+#include <net/net_namespace.h>
 
 #define RNDIS_MAX_INPUT 4000
 
@@ -12,6 +14,7 @@ static unsigned long get_address;
 static unsigned long send_address;
 static unsigned long put_address;
 static unsigned long rndis_device;
+static unsigned int extension_offset;
 static unsigned int request_type = 5;
 static unsigned int oid = 0x0001010e;
 static unsigned int input_length = 4;
@@ -224,6 +227,7 @@ module_param_cb(get_address, &ulong_ops, &get_address, 0000);
 module_param_cb(send_address, &ulong_ops, &send_address, 0000);
 module_param_cb(put_address, &ulong_ops, &put_address, 0000);
 module_param_cb(rndis_device, &ulong_ops, &rndis_device, 0000);
+module_param_cb(extension_offset, &uint_ops, &extension_offset, 0000);
 module_param_cb(request_type, &uint_ops, &request_type, 0600);
 module_param_cb(oid, &uint_ops, &oid, 0600);
 module_param_cb(input_length, &uint_ops, &input_length, 0600);
@@ -236,6 +240,19 @@ module_param_cb(arm, &arm_ops, &arm, 0600);
 
 static int __init rndis_oid_set_init(void)
 {
+    if (!rndis_device && extension_offset) {
+        struct net_device *ndev = dev_get_by_name(&init_net, "eth0");
+        void *nvdev;
+
+        if (!ndev)
+            return -ENODEV;
+        nvdev = *((void **)netdev_priv(ndev) + 1);
+        if (nvdev)
+            rndis_device = *(unsigned long *)((u8 *)nvdev + extension_offset);
+        pr_info("rndis_oid_set resolved ndev=%px nvdev=%px extension_offset=%#x rndis=%px\n",
+                ndev, nvdev, extension_offset, (void *)rndis_device);
+        dev_put(ndev);
+    }
     return 0;
 }
 
