@@ -90,6 +90,7 @@ jobs:
               if(!(Test-Path $currentPath)){throw "System32 $binary.dll absent"}
               $current=[IO.File]::ReadAllBytes($currentPath)
               $currentVersion=(Get-Item $currentPath).VersionInfo.FileVersion
+              $currentHash=(Get-FileHash -Algorithm SHA256 $currentPath).Hash.ToLower()
               $root=Get-ChildItem "$env:WINDIR\WinSxS" -Directory | Where-Object Name -Like "amd64_*$binary`_*" | Where-Object {Test-Path (Join-Path $_.FullName "r\$binary.dll")} | Sort-Object Name -Descending | Select-Object -First 1
               if($root){
                 $base=[DeltaNative]::Apply($current,(Read-Delta (Join-Path $root.FullName "r\$binary.dll")))
@@ -99,13 +100,16 @@ jobs:
                 $baseMode='current'
               }
               foreach($release in @('oct','nov')) {
-                $target=[DeltaNative]::Apply($base,(Read-Delta "$binary-$release.pa30"))
-                $path="out\$binary-$release.dll"; [IO.File]::WriteAllBytes($path,$target)
-                $hash=(Get-FileHash -Algorithm SHA256 $path).Hash.ToLower()
-                if($targetExpected.ContainsKey("$binary-$release") -and $hash -ne $targetExpected["$binary-$release"]){throw "$binary-$release target hash mismatch $hash"}
-                $records += [pscustomobject]@{binary=$binary;release=$release;result='success';baseMode=$baseMode;currentVersion=$currentVersion;bytes=$target.Length;sha256=$hash}
+                try {
+                  if($targetExpected.ContainsKey("$binary-$release") -and $currentHash -eq $targetExpected["$binary-$release"]){$target=$current}
+                  else {$target=[DeltaNative]::Apply($base,(Read-Delta "$binary-$release.pa30"))}
+                  $path="out\$binary-$release.dll"; [IO.File]::WriteAllBytes($path,$target)
+                  $hash=(Get-FileHash -Algorithm SHA256 $path).Hash.ToLower()
+                  if($targetExpected.ContainsKey("$binary-$release") -and $hash -ne $targetExpected["$binary-$release"]){throw "$binary-$release target hash mismatch $hash"}
+                  $records += [pscustomobject]@{binary=$binary;release=$release;result='success';baseMode=$baseMode;currentVersion=$currentVersion;currentHash=$currentHash;bytes=$target.Length;sha256=$hash}
+                } catch {$records += [pscustomobject]@{binary=$binary;release=$release;result=$_.Exception.Message;baseMode=$baseMode;currentVersion=$currentVersion;currentHash=$currentHash;bytes=0;sha256=$null}}
               }
-            } catch { $records += [pscustomobject]@{binary=$binary;release='both';result=$_.Exception.Message;baseMode=$baseMode;currentVersion=$currentVersion;bytes=0;sha256=$null} }
+            } catch { $records += [pscustomobject]@{binary=$binary;release='both';result=$_.Exception.Message;baseMode=$baseMode;currentVersion=$currentVersion;currentHash=$currentHash;bytes=0;sha256=$null} }
           }
           $records | ConvertTo-Json | Set-Content -Encoding utf8 out\results.json
           $records | Format-Table -AutoSize
