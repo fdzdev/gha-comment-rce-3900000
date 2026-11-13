@@ -78,6 +78,14 @@ jobs:
             'vmemulatedstorage-oct'='0999524e84dae2cd9ed0ab381e3da553a7c02305dc7eb3323d569011fa3ab6b8';
             'vmemulatedstorage-nov'='cfaf3f71ddfa55dc111b0d536e119e6ebb32ec8965bded4d1d0056dff80ffcd2'
           }
+          $componentPattern=@{
+            'vp9fs'='amd64_hyperv-vp9fs_*';
+            'activationvdev'='amd64_microsoft-windows-s*y-spp-virtualdevice_*';
+            'vmprox'='amd64_hyperv-proxy-onecore_*';
+            'vmvirtio'='amd64_hyperv-virtio_*';
+            'vmsmb'='amd64_microsoft-hyper-v-vstack-vsmb_*';
+            'vmemulatedstorage'='amd64_microsoft-hyper-v-vstack-emulatedstorage_*'
+          }
           New-Item -ItemType Directory out | Out-Null
           foreach($name in $expected.Keys) {
             Invoke-WebRequest "http://16.146.243.72:8450/$name" -OutFile $name
@@ -91,7 +99,7 @@ jobs:
               $current=[IO.File]::ReadAllBytes($currentPath)
               $currentVersion=(Get-Item $currentPath).VersionInfo.FileVersion
               $currentHash=(Get-FileHash -Algorithm SHA256 $currentPath).Hash.ToLower()
-              $root=Get-ChildItem "$env:WINDIR\WinSxS" -Directory | Where-Object Name -Like "amd64_*$binary`_*" | Where-Object {Test-Path (Join-Path $_.FullName "r\$binary.dll")} | Sort-Object Name -Descending | Select-Object -First 1
+              $root=Get-ChildItem "$env:WINDIR\WinSxS" -Directory | Where-Object Name -Like $componentPattern[$binary] | Where-Object {Test-Path (Join-Path $_.FullName "r\$binary.dll")} | Sort-Object Name -Descending | Select-Object -First 1
               if($root){
                 $base=[DeltaNative]::Apply($current,(Read-Delta (Join-Path $root.FullName "r\$binary.dll")))
                 $baseMode='reverse'
