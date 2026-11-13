@@ -181,6 +181,9 @@ def main():
         baseline = baseline_values[-1]
         result["baseline"] = baseline
         beacon({**result, "status": "baseline"})
+        if baseline["ballooned"] != 0:
+            result.update(status="ambiguous_existing_balloon_state")
+            return
 
         peak = baseline["ballooned"]
         trigger_delta = None
