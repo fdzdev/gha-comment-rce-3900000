@@ -67,7 +67,8 @@ print((head+b'\0'*(512+40)).hex())
 PY
 )
 run_case rss-disable-r2 5 0x00010204 "$rss_disable"
-run_case ipsec-enable-parameters 5 0xfc01020c 80021600000000000000000000000000000000000404
+run_case ipsec-enable-parameters 5 0xfc01020c 80021600010101010101010101010100000000000404
+sleep 1
 run_case ipsec-current-enabled-query 4 0xfc01020b ''
 ipsec_delete_absent=80011800000000000000000000000000ffffffffffffffff
 make_ipsec_ex() {
