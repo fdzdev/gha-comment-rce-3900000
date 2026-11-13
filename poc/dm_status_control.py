@@ -8,6 +8,7 @@ import json
 import os
 import re
 import struct
+import subprocess
 import time
 import urllib.parse
 import urllib.request
@@ -101,6 +102,16 @@ def trace_root():
     for root in (SYS + "/kernel/tracing", SYS + "/kernel/debug/tracing"):
         if os.path.exists(root + "/events/hyperv/balloon_status/enable"):
             return root
+    # The UVM init mount namespace normally leaves tracefs unmounted. The
+    # usermode-helper root used by this workflow has CAP_SYS_ADMIN; mount the
+    # per-UVM tracefs only when needed and let allocation teardown remove it.
+    candidate = SYS + "/kernel/tracing"
+    os.makedirs(candidate, exist_ok=True)
+    subprocess.run(["mount", "-t", "tracefs", "tracefs", candidate],
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                   check=False)
+    if os.path.exists(candidate + "/events/hyperv/balloon_status/enable"):
+        return candidate
     raise RuntimeError("balloon_status tracepoint absent")
 
 
