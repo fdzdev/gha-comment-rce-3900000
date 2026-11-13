@@ -197,8 +197,8 @@ def main():
         sends = []
         # Descend gradually so the first host request is bounded rather than
         # asking the stock driver to surrender the whole guest.
-        for delta in (4096, 16384, 65536):
-            low = max(1, baseline["committed"] - delta)
+        for delta in (baseline["committed"],):
+            low = max(0, baseline["committed"] - delta)
             for _ in range(8):
                 sends.append({"phase": "low", "delta": delta,
                               "errno": send_phase(baseline["available"] + delta,
