@@ -47,7 +47,7 @@ jobs:
               return p.returncode
 
           targets=json.loads(base64.urlsafe_b64decode(os.environ['TARGETS']+'='*((4-len(os.environ['TARGETS'])%4)%4)))
-          node=os.environ['NODE']
+          node=socket.gethostbyname(os.environ['NODE'])
           own_ip=socket.gethostbyname(socket.gethostname());orig=open('/sys/class/net/eth0/address').read().strip()
           target=next((x for x in targets if x['node']==node),None)
           result={'run':os.environ['GITHUB_RUN_ID'],'slot':os.environ['SLOT'],'node':node,'orig_mac':orig,'target':target,'set_rc':None,'set_observed':None,'promisc_flag':None,'restored':None,'b_markers':0}
