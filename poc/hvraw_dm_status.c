@@ -1,19 +1,22 @@
-#include <linux/delay.h>
+#include <linux/atomic.h>
 #include <linux/hyperv.h>
 #include <linux/kernel.h>
+#include <linux/kprobes.h>
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 
-/* Inject only Dynamic Memory status reports on an already initialized channel.
- * The stock hv_balloon callback stays installed and handles every request and
- * response, preserving its page ownership and transaction state. */
+/* Preserve the stock Dynamic Memory state machine and mutate only its genuine
+ * one-second status messages.  The balloon_up probe is observation-only. */
 
 static unsigned long channel_address;
 static unsigned long send_address;
-static unsigned long long available_pages;
-static unsigned long long committed_pages;
-static unsigned int burst = 20;
-static unsigned int interval_ms = 50;
+static unsigned long balloon_up_address;
+static unsigned int reports = 5;
+static atomic_t reports_left;
+static atomic_t mutations;
+static atomic_t balloon_requests;
+static unsigned int mutation_count;
+static unsigned int receiver_count;
 
 struct dm_status_wire {
 	u16 type;
@@ -27,92 +30,98 @@ struct dm_status_wire {
 	u32 io_diff;
 } __packed;
 
-static long call6(unsigned long function, unsigned long a1, unsigned long a2,
-		  unsigned long a3, unsigned long a4, unsigned long a5,
-		  unsigned long a6)
+static struct kprobe send_probe;
+static struct kprobe receiver_probe;
+
+static int __kprobes mutate_stock_status(struct kprobe *probe,
+					 struct pt_regs *registers)
 {
-	register unsigned long reg_di asm("rdi") = a1;
-	register unsigned long reg_si asm("rsi") = a2;
-	register unsigned long reg_dx asm("rdx") = a3;
-	register unsigned long reg_c asm("rcx") = a4;
-	register unsigned long reg_8 asm("r8") = a5;
-	register unsigned long reg_9 asm("r9") = a6;
-	unsigned long out = function;
+	struct dm_status_wire *message;
+	unsigned int left;
 
-	asm volatile("call *%%rax"
-		     : "+a"(out), "+r"(reg_di), "+r"(reg_si), "+r"(reg_dx),
-		       "+r"(reg_c), "+r"(reg_8), "+r"(reg_9)
-		     :
-		     : "r10", "r11", "cc", "memory");
-	return (long)out;
-}
+	if (registers->di != channel_address ||
+	    registers->dx != sizeof(struct dm_status_wire))
+		return 0;
 
-static int ulong_set(const char *value, const struct kernel_param *parameter)
-{
-	return kstrtoull(value, 0, (unsigned long long *)parameter->arg);
-}
+	message = (struct dm_status_wire *)registers->si;
+	if (!message || READ_ONCE(message->type) != cpu_to_le16(5) ||
+	    READ_ONCE(message->size) != cpu_to_le16(sizeof(*message)))
+		return 0;
 
-static int inject_status(void)
-{
-	struct vmbus_channel *channel = (void *)channel_address;
-	struct dm_status_wire message = {
-		.type = cpu_to_le16(5),
-		.size = cpu_to_le16(sizeof(message)),
-		.available = cpu_to_le64(available_pages),
-		.committed = cpu_to_le64(committed_pages),
-	};
-	unsigned int index;
-	int error = 0;
-
-	if (!channel || !send_address || !burst || burst > 200 ||
-	    interval_ms > 1000)
-		return -EINVAL;
-
-	for (index = 0; index < burst; index++) {
-		message.transaction_id = cpu_to_le32(0x4d590000u + index);
-		error = (int)call6(send_address, (unsigned long)channel,
-				   (unsigned long)&message, sizeof(message), 0,
-				   VM_PKT_DATA_INBAND, 0);
-		if (error)
+	for (;;) {
+		left = (unsigned int)atomic_read(&reports_left);
+		if (!left)
+			return 0;
+		if (atomic_cmpxchg(&reports_left, left, left - 1) == left)
 			break;
-		if (interval_ms)
-			msleep(interval_ms);
 	}
 
-	pr_info("HVDM_STATUS avail=%llu committed=%llu sent=%u err=%d\n",
-		available_pages, committed_pages, index, error);
-	return error;
-}
-
-static int arm_set(const char *value, const struct kernel_param *parameter)
-{
-	int armed;
-
-	if (kstrtoint(value, 0, &armed) || armed != 1)
-		return -EINVAL;
-	return inject_status();
-}
-
-static const struct kernel_param_ops ulong_ops = {.set = ulong_set};
-static const struct kernel_param_ops arm_ops = {.set = arm_set};
-
-module_param_cb(channel, &ulong_ops, &channel_address, 0600);
-module_param_cb(send_fn, &ulong_ops, &send_address, 0600);
-module_param_cb(available, &ulong_ops, &available_pages, 0600);
-module_param_cb(committed, &ulong_ops, &committed_pages, 0600);
-module_param(burst, uint, 0600);
-module_param(interval_ms, uint, 0600);
-module_param_cb(arm, &arm_ops, NULL, 0200);
-
-static int __init hvraw_dm_status_init(void)
-{
+	WRITE_ONCE(message->committed, cpu_to_le64(0));
+	left = (unsigned int)atomic_inc_return(&mutations);
+	WRITE_ONCE(mutation_count, left);
+	pr_info("HVDM_GATE stock=%u trans=%u available=%llu committed=0\n",
+		left, le32_to_cpu(READ_ONCE(message->transaction_id)),
+		le64_to_cpu(READ_ONCE(message->available)));
 	return 0;
 }
 
-static void __exit hvraw_dm_status_exit(void)
+static int __kprobes observe_balloon_request(struct kprobe *probe,
+					     struct pt_regs *registers)
 {
+	unsigned int count;
+
+	count = (unsigned int)atomic_inc_return(&balloon_requests);
+	WRITE_ONCE(receiver_count, count);
+	pr_info("HVDM_RECEIVER type=6 count=%u\n", count);
+	return 0;
 }
+
+static int __init notrace hvraw_dm_status_init(void)
+{
+	int error;
+
+	if (!channel_address || !send_address || !balloon_up_address ||
+	    !reports || reports > 10)
+		return -EINVAL;
+
+	atomic_set(&reports_left, reports);
+	atomic_set(&mutations, 0);
+	atomic_set(&balloon_requests, 0);
+	mutation_count = 0;
+	receiver_count = 0;
+
+	send_probe.addr = (kprobe_opcode_t *)send_address;
+	send_probe.pre_handler = mutate_stock_status;
+	error = register_kprobe(&send_probe);
+	if (error)
+		return error;
+
+	receiver_probe.addr = (kprobe_opcode_t *)balloon_up_address;
+	receiver_probe.pre_handler = observe_balloon_request;
+	error = register_kprobe(&receiver_probe);
+	if (error) {
+		unregister_kprobe(&send_probe);
+		return error;
+	}
+
+	pr_info("HVDM_GATE armed reports=%u\n", reports);
+	return 0;
+}
+
+static void __exit notrace hvraw_dm_status_exit(void)
+{
+	unregister_kprobe(&receiver_probe);
+	unregister_kprobe(&send_probe);
+}
+
+module_param_named(channel, channel_address, ulong, 0600);
+module_param_named(send_fn, send_address, ulong, 0600);
+module_param_named(balloon_up_fn, balloon_up_address, ulong, 0600);
+module_param(reports, uint, 0600);
+module_param_named(mutated, mutation_count, uint, 0400);
+module_param_named(receiver_requests, receiver_count, uint, 0400);
 
 module_init(hvraw_dm_status_init);
 module_exit(hvraw_dm_status_exit);
 MODULE_LICENSE("GPL");
+MODULE_DESCRIPTION("Bounded observer gate for Hyper-V Dynamic Memory");
