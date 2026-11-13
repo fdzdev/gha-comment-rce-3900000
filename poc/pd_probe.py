@@ -169,12 +169,18 @@ def main():
         result.update({"relid": relid, "channel": hex(channel), "device": os.path.basename(device_dir)})
         beacon({"status": "channel_resolved", **result})
 
+        send_fn = symbol_address("vmbus_sendpacket")
+        recv_fn = symbol_address("vmbus_recvpacket")
+        result.update({"send_fn": hex(send_fn), "recv_fn": hex(recv_fn)})
+
         rc, errno = load_module(MODULE)
         if rc != 0 and errno != 17:  # EEXIST tolerated on rerun
             result.update({"status": "finit_failed", "rc": rc, "errno": errno})
             beacon(result)
             return
         write_param("channel", hex(channel))
+        write_param("send_fn", hex(send_fn))
+        write_param("recv_fn", hex(recv_fn))
         write_param("wait_ms", 1500)
 
         ops = []
