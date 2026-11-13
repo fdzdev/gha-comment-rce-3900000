@@ -67,26 +67,42 @@ print((head+b'\0'*(512+40)).hex())
 PY
 )
 run_case rss-disable-r2 5 0x00010204 "$rss_disable"
+run_case ipsec-enable-parameters 5 0xfc01020c 80021600000000000000000000000000000000000404
+run_case ipsec-current-enabled-query 4 0xfc01020b ''
 ipsec_delete_absent=80011800000000000000000000000000ffffffffffffffff
-ipsec_add_ex=$(python3 - <<'PY'
-import struct
-b=bytearray(0xd0)
+make_ipsec_ex() {
+python3 - "$@" <<'PY'
+import re,socket,struct,sys
+op,auth_id,auth_len,enc_id,enc_len=map(int,sys.argv[1:])
+key_len=auth_len+enc_len
+b=bytearray(0xb0+key_len)
 b[0]=0x80; b[1]=1
-struct.pack_into('<H',b,2,0xaa)
-struct.pack_into('<I',b,4,1)
-struct.pack_into('<I',b,0x40,1)
+struct.pack_into('<HII',b,2,0xaa,1,0)
+match=re.search(r'\b192\.168\.\d+\.\d+\b',open('/hostproc/net/fib_trie').read())
+b[0x0c:0x10]=socket.inet_aton(match.group() if match else '0.0.0.0')
+b[0x10:0x14]=socket.inet_aton('8.8.8.8')
+struct.pack_into('<II',b,0x3c,0,op)
 struct.pack_into('<I',b,0x44,0x11223344)
-struct.pack_into('<IIII',b,0x48,4,32,0,0)
-struct.pack_into('<IIII',b,0x58,1,0,0,0)
-struct.pack_into('<II',b,0x9c,32,0xb0)
-b[0xb0:0xd0]=bytes.fromhex('123456789abcdef0'*4)
+struct.pack_into('<IIII',b,0x48,auth_id,auth_len,0,0)
+struct.pack_into('<IIII',b,0x58,enc_id,enc_len,auth_len,0)
+struct.pack_into('<II',b,0x9c,key_len,0xb0)
+b[0xb0:]=bytes((i*29+7)&255 for i in range(key_len))
 print(b.hex())
 PY
-)
+}
+ipsec_ah_sha1=$(make_ipsec_ex 1 2 20 0 0)
+ipsec_ah_sha256=$(make_ipsec_ex 1 4 32 0 0)
+ipsec_esp_sha1_null=$(make_ipsec_ex 2 2 20 1 0)
+ipsec_esp_aes_cbc128=$(make_ipsec_ex 2 0 0 64 16)
+ipsec_esp_gcm128=$(make_ipsec_ex 2 0 0 8 20)
 run_case ipsec-delete-absent 5 0xfc030203 "$ipsec_delete_absent"
 run_case ipsec-update-empty 5 0xfc030204 ''
-run_case ipsec-add-ex 5 0xfc030205 "$ipsec_add_ex"
+run_case ipsec-add-ex-ah-sha1 5 0xfc030205 "$ipsec_ah_sha1"
+run_case ipsec-add-ex-ah-sha256 5 0xfc030205 "$ipsec_ah_sha256"
+run_case ipsec-add-ex-esp-sha1-null 5 0xfc030205 "$ipsec_esp_sha1_null"
+run_case ipsec-add-ex-esp-aes-cbc128 5 0xfc030205 "$ipsec_esp_aes_cbc128"
+run_case ipsec-add-ex-esp-gcm128 5 0xfc030205 "$ipsec_esp_gcm128"
 
 sleep 2
-dmesg --notime 2>/dev/null | grep -E 'rndis_oid_(set|query)' | tail -40
+dmesg --notime 2>/dev/null | grep -E 'rndis_oid_(set|query)' | tail -100
 printf 'ROOT_AUTO done\n'

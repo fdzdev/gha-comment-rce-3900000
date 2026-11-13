@@ -184,10 +184,17 @@ static void execute(void)
             u32 result_offset = *(u32 *)(response + 0x14);
 
             if (result_length <= RNDIS_MAX_INPUT && result_offset <= RNDIS_MAX_INPUT &&
-                result_length + result_offset <= RNDIS_MAX_INPUT)
+                result_length + result_offset <= RNDIS_MAX_INPUT) {
+                u32 chunk;
+
                 pr_info("rndis_oid_query oid=%#x result_length=%u result_offset=%u head=%*phN\n",
                         oid, result_length, result_offset,
                         min_t(u32, result_length, 192), response + 8 + result_offset);
+                for (chunk = 0; chunk < result_length; chunk += 64)
+                    pr_info("rndis_oid_query_chunk oid=%#x offset=%u data=%*phN\n",
+                            oid, chunk, min_t(u32, result_length - chunk, 64),
+                            response + 8 + result_offset + chunk);
+            }
         }
         call_put(rndis_device, request);
         if (delay_us)
