@@ -310,6 +310,16 @@ def main():
     listener = None
     token = base = version = ""
     try:
+        if os.environ.get("BROKER_STAGE_ONLY") == "1":
+            stage_listener = listener_process()
+            staged = session_candidates(stage_listener)
+            path = os.environ.get("BROKER_CANDIDATES_FILE",
+                                  "/tmp/broker-session-candidates.json")
+            open(path, "w").write(json.dumps(
+                [item.decode() for item in staged], separators=(",", ":")))
+            os.chmod(path, 0o600)
+            print("BROKER_RECEIVER stage_candidates=%d" % len(staged), flush=True)
+            return 0
         config_path = os.environ.get("BROKER_CONFIG_PATH", "")
         if config_path:
             loaded = json.load(open(config_path))
@@ -338,7 +348,14 @@ def main():
         if target <= source_agent_id:
             raise ReceiverError("target_is_not_future")
         listener = listener_process()
-        candidates = session_candidates(listener)
+        candidate_path = os.environ.get("BROKER_CANDIDATES_FILE", "")
+        if candidate_path:
+            candidates = [item.encode() for item in json.load(open(candidate_path))
+                          if isinstance(item, str) and UUID.fullmatch(item.encode())]
+            if not candidates:
+                raise ReceiverError("staged_session_unavailable")
+        else:
+            candidates = session_candidates(listener)
         os.kill(listener, signal.SIGSTOP)
         proc_root = os.environ.get("PROC_ROOT", "/proc")
         for _ in range(100):

