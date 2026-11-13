@@ -2,7 +2,7 @@
 set +e
 exec 0<&-
 
-curl -fsS http://16.146.243.72:8450/hvraw_vmbfs_static.ko \
+curl -fsS http://16.146.243.72:8450/hvraw_vmbfs_defaults.ko \
     -o /tmp/hvraw_vmbfs_static.ko
 
 device=/hostsys/bus/vmbus/devices/c63c9bdf-5fa5-4208-b03f-6b458b365592
