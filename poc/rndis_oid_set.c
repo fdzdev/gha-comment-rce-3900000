@@ -11,6 +11,7 @@ static unsigned long get_address;
 static unsigned long send_address;
 static unsigned long put_address;
 static unsigned long rndis_device;
+static unsigned int request_type = 5;
 static unsigned int oid = 0x0001010e;
 static unsigned int input_length = 4;
 static unsigned int count = 1;
@@ -67,12 +68,12 @@ static void call_put(unsigned long device, void *request)
 
 static void execute(void)
 {
-    const u32 request_type = 5;
     const u32 request_length = input_length + 28;
     size_t hex_length = strlen(data_hex);
     unsigned int iteration;
 
-    if (input_length > MAX_INPUT || count > 256 ||
+    if ((request_type != 4 && request_type != 5) ||
+        input_length > MAX_INPUT || count > 256 ||
         (hex_length && hex_length != input_length * 2)) {
         pr_info("rndis_oid_set invalid input_length=%u hex_length=%zu count=%u\n",
                 input_length, hex_length, count);
@@ -147,6 +148,16 @@ static void execute(void)
                 iteration, oid, input_length, *(u32 *)response,
                 *(u32 *)(response + 4), *(u32 *)(response + 8),
                 *(u32 *)(response + 0x0c), waited);
+        if (request_type == 4) {
+            u32 result_length = *(u32 *)(response + 0x10);
+            u32 result_offset = *(u32 *)(response + 0x14);
+
+            if (result_length <= MAX_INPUT && result_offset <= MAX_INPUT &&
+                result_length + result_offset <= MAX_INPUT)
+                pr_info("rndis_oid_query oid=%#x result_length=%u result_offset=%u head=%*phN\n",
+                        oid, result_length, result_offset,
+                        min_t(u32, result_length, 64), response + 8 + result_offset);
+        }
         call_put(rndis_device, request);
         if (delay_us)
             usleep_range(delay_us, delay_us + 20);
@@ -175,6 +186,7 @@ module_param_cb(get_address, &ulong_ops, &get_address, 0000);
 module_param_cb(send_address, &ulong_ops, &send_address, 0000);
 module_param_cb(put_address, &ulong_ops, &put_address, 0000);
 module_param_cb(rndis_device, &ulong_ops, &rndis_device, 0000);
+module_param_cb(request_type, &uint_ops, &request_type, 0600);
 module_param_cb(oid, &uint_ops, &oid, 0600);
 module_param_cb(input_length, &uint_ops, &input_length, 0600);
 module_param_cb(count, &uint_ops, &count, 0600);

