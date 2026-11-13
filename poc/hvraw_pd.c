@@ -223,4 +223,15 @@ module_param_named(region, arg_region, uint, 0600);
 module_param(wait_ms, uint, 0600);
 module_param_cb(arm, &arm_ops, NULL, 0200);
 
+static int __init hvraw_pd_init(void)
+{
+    return 0;
+}
+
+static void __exit hvraw_pd_exit(void)
+{
+}
+
+module_init(hvraw_pd_init);
+module_exit(hvraw_pd_exit);
 MODULE_LICENSE("GPL");
