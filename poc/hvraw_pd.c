@@ -89,6 +89,8 @@ static long call6(unsigned long function, unsigned long a1, unsigned long a2,
 	register unsigned long reg_9 asm("r9") = a6;
 	unsigned long out = function;
 
+	/* The callee clobbers every argument register; declare all of them as
+	 * read-write operands so the compiler never reuses them afterward. */
 	asm volatile("call *%%rax"
 		     : "+a"(out), "+r"(reg_di), "+r"(reg_si), "+r"(reg_dx),
 		       "+r"(reg_c), "+r"(reg_8), "+r"(reg_9)
@@ -152,6 +154,15 @@ static int do_probe(void)
 		request.alloc_com_buf.pf_node = 0;
 		request.alloc_com_buf.region_id = arg_region;
 		send_length = 8 + 10;
+		break;
+	case 90:
+		/* Positive control: NVSP_MSG1_TYPE_SEND_RECV_BUF (101) with an
+		 * invalid GPADL handle must yield SEND_RECV_BUF_COMPLETE (102)
+		 * carrying an error status, proving the receive path. */
+		request.msg_type = 101;
+		request.op = 0xffffffff;	/* gpadl_handle: invalid */
+		request.config.mmio_pa = 0;	/* id=0 in low bytes */
+		send_length = 4 + 4 + 2;
 		break;
 	default:
 		return -EOPNOTSUPP;
