@@ -1,0 +1,3 @@
+obj-m += rndis_oid_census.o
+ccflags-y += -fno-stack-protector -fpatchable-function-entry=0,0
+CFLAGS_REMOVE_rndis_oid_census.o += -pg -mrecord-mcount -mfentry
