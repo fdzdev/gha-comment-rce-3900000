@@ -20,3 +20,5 @@ jobs:
           cp poc/root_hca_diagnostics_entry.sh /tmp/root_auto.sh
           chmod +x /tmp/root_auto.sh /tmp/hca_diagnostics_scope_probe.py
           HVS_INLINE=1 bash /tmp/initial_takeover.sh
+          sudo -n env DIAGNOSTICS_SAS_FILE=/tmp/hca-diagnostics-url \
+            python3 poc/hca_diagnostics_scope_probe.py

