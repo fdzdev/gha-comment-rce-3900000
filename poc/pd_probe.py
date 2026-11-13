@@ -215,12 +215,19 @@ def main():
             return
         beacon({**result, "status": "module_loaded"})
         write_param("channel", hex(channel))
+        beacon({**result, "status": "param_channel"})
         write_param("callback_slot", hex(channel + callback_offset))
+        beacon({**result, "status": "param_callback"})
         write_param("context_slot", hex(channel + callback_offset + 8))
+        beacon({**result, "status": "param_context"})
         write_param("request_id_slot", hex(channel + request_id_offset))
+        beacon({**result, "status": "param_request_id"})
         write_param("send_fn", hex(send_fn))
+        beacon({**result, "status": "param_send"})
         write_param("recv_fn", hex(recv_fn))
+        beacon({**result, "status": "param_recv"})
         write_param("wait_ms", 1500)
+        beacon({**result, "status": "param_ready"})
 
         ops = []
         # S1: CONFIG with a null MMIO region (pure capability probe).
