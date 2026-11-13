@@ -1,3 +1,5 @@
+#undef CONFIG_FORTIFY_SOURCE
+
 #include <linux/delay.h>
 #include <linux/module.h>
 #include <linux/moduleparam.h>
