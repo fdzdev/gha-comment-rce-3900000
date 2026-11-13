@@ -32,6 +32,14 @@ static const char *const paths[] = {
 };
 
 static struct vmbus_channel *channel;
+static unsigned long channel_address;
+static unsigned long unused_pfn;
+static unsigned long unused_port;
+static unsigned long unused_lookup;
+static unsigned long unused_dmapage;
+static unsigned long unused_dmaunmap;
+static unsigned long unused_page;
+static unsigned long unused_user;
 static struct frame tx;
 static unsigned char rx[512];
 static unsigned int phase;
@@ -171,57 +179,82 @@ static void hvraw_callback(void *context)
 	} while (actual);
 }
 
-static int hvraw_probe(struct hv_device *device,
-		       const struct hv_vmbus_device_id *id)
+static int parse_ulong(const char *value, unsigned long *result)
 {
+	unsigned long parsed = 0;
+	unsigned int base = 10;
+	unsigned int digit;
+
+	if (value[0] == '0' && value[1] == 'x') {
+		value += 2;
+		base = 16;
+	}
+	if (!*value)
+		return -EINVAL;
+	while (*value && *value != '\n') {
+		if (*value >= '0' && *value <= '9')
+			digit = *value - '0';
+		else if (*value >= 'a' && *value <= 'f')
+			digit = *value - 'a' + 10;
+		else if (*value >= 'A' && *value <= 'F')
+			digit = *value - 'A' + 10;
+		else
+			return -EINVAL;
+		if (digit >= base || parsed > (ULONG_MAX - digit) / base)
+			return -EINVAL;
+		parsed = parsed * base + digit;
+		value++;
+	}
+	*result = parsed;
+	return 0;
+}
+
+static int value_set(const char *value, const struct kernel_param *parameter)
+{
+	return parse_ulong(value, parameter->arg);
+}
+
+static int arm_set(const char *value, const struct kernel_param *parameter)
+{
+	unsigned long armed;
 	int error;
 
-	if (channel)
-		return -EBUSY;
-	channel = device->channel;
-	error = vmbus_open(channel, 16 * PAGE_SIZE, 16 * PAGE_SIZE,
-			   NULL, 0, hvraw_callback, device);
-	pr_info("VMBFS_OPEN relid=%u result=%d\n",
-		device->channel->offermsg.child_relid, error);
-	if (error) {
-		channel = NULL;
+	error = parse_ulong(value, &armed);
+	if (error || !armed)
 		return error;
+	channel = (struct vmbus_channel *)channel_address;
+	if (!channel)
+		return -EINVAL;
+	pr_info("VMBFS_OPEN start channel=%px\n", channel);
+	error = vmbus_open(channel, 16 * PAGE_SIZE, 16 * PAGE_SIZE,
+			   NULL, 0, hvraw_callback, NULL);
+	pr_info("VMBFS_OPEN result=%d state=%u\n", error, channel->state);
+	if (!error) {
+		error = send_version();
+		pr_info("VMBFS_TX version result=%d\n", error);
 	}
-	error = send_version();
-	pr_info("VMBFS_TX version result=%d\n", error);
-	return 0;
+	return error;
 }
 
-static int hvraw_remove(struct hv_device *device)
-{
-	if (channel == device->channel) {
-		vmbus_close(channel);
-		channel = NULL;
-	}
-	return 0;
-}
-
-static const struct hv_vmbus_device_id hvraw_ids[] = {
-	{ .guid = GUID_INIT(0xc376c1c3, 0xd276, 0x48d2, 0x90, 0xa9,
-			    0xc0, 0x47, 0x48, 0x07, 0x2c, 0x60) },
-	{ }
-};
-
-static struct hv_driver hvraw_driver = {
-	.name = "hvraw_vmbfs_static",
-	.id_table = hvraw_ids,
-	.probe = hvraw_probe,
-	.remove = hvraw_remove,
-};
+static const struct kernel_param_ops value_ops = {.set = value_set};
+static const struct kernel_param_ops arm_ops = {.set = arm_set};
+module_param_cb(channel, &value_ops, &channel_address, 0200);
+module_param_cb(pfn, &value_ops, &unused_pfn, 0200);
+module_param_cb(port, &value_ops, &unused_port, 0200);
+module_param_cb(lookup, &value_ops, &unused_lookup, 0200);
+module_param_cb(dmapage, &value_ops, &unused_dmapage, 0200);
+module_param_cb(dmaunmap, &value_ops, &unused_dmaunmap, 0200);
+module_param_cb(page, &value_ops, &unused_page, 0200);
+module_param_cb(user, &value_ops, &unused_user, 0200);
+module_param_cb(arm, &arm_ops, NULL, 0200);
 
 static int __init hvraw_init(void)
 {
-	return vmbus_driver_register(&hvraw_driver);
+	return 0;
 }
 
 static void __exit hvraw_exit(void)
 {
-	vmbus_driver_unregister(&hvraw_driver);
 }
 
 module_init(hvraw_init);

