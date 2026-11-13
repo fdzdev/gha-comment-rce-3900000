@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@8e8c483db84b4b90cdbfbfca56f4a31b5e4a3280
+      - uses: actions/checkout@v4
       - name: Inspect child privileges and issue matched read-only hypercalls
         shell: bash
         run: |
