@@ -26,7 +26,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $hostName = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Virtual Machine\Guest\Parameters').PhysicalHostNameFullyQualified
           $disk = Get-Disk | Where-Object FriendlyName -like '*NVMe Direct*' | Select-Object -First 1
-          if (-not $disk) { exit 0 }
+          if (-not $disk) { Start-Sleep -Seconds 25; exit 0 }
           $serial = ($disk.SerialNumber -replace '[^0-9A-Fa-f_]', '').Trim('_')
           $partition = Get-Partition -DiskNumber $disk.Number | Where-Object DriveLetter | Select-Object -First 1
           $ntfs = fsutil fsinfo ntfsinfo "$($partition.DriveLetter):" | Out-String
