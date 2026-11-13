@@ -104,6 +104,7 @@ static int do_probe(void)
 	struct vmbus_channel *channel = (struct vmbus_channel *)channel_address;
 	void (*saved_callback)(void *context);
 	void *saved_context;
+	u64 (*saved_request_id_callback)(struct vmbus_channel *, u64);
 	struct pd_req request;
 	u8 response[256];
 	u32 actual;
@@ -164,19 +165,32 @@ static int do_probe(void)
 		request.config.mmio_pa = 0;	/* id=0 in low bytes */
 		send_length = 4 + 4 + 2;
 		break;
+	case 91:
+		/* Exact minimum receive PostBatch: count=0, is_recv=1. The host
+		 * returns an empty VMBus transaction completion after dispatch. */
+		request.msg_type = 136;
+		request.op = 2u << 16;
+		send_length = 8;
+		break;
 	default:
 		return -EOPNOTSUPP;
 	}
 
 	saved_callback = channel->onchannel_callback;
 	saved_context = channel->channel_callback_context;
+	saved_request_id_callback = channel->next_request_id_callback;
 	channel->onchannel_callback = quiet_callback;
 	channel->channel_callback_context = NULL;
+	/* NetVSP normally maps transaction IDs through the requestor. Disable
+	 * that mapping for this one synchronous exchange so an empty completion
+	 * remains distinguishable from an empty ring. */
+	channel->next_request_id_callback = NULL;
 
 	error = (int)call6(send_fn, (unsigned long)channel,
 			   (unsigned long)&request, send_length,
 			   0x4d5954480000ULL + op, VM_PKT_DATA_INBAND,
 			   VMBUS_DATA_PACKET_FLAG_COMPLETION_REQUESTED);
+	channel->next_request_id_callback = saved_request_id_callback;
 	pr_info("HVPD send op=%u len=%u err=%d\n", op, send_length, error);
 
 	deadline = jiffies + msecs_to_jiffies(wait_ms);
@@ -212,6 +226,7 @@ static int do_probe(void)
 
 	channel->onchannel_callback = saved_callback;
 	channel->channel_callback_context = saved_context;
+	channel->next_request_id_callback = saved_request_id_callback;
 	pr_info("HVPD done op=%u packets=%d\n", op, packets);
 	return 0;
 }
