@@ -1,8 +1,9 @@
 #include <linux/gfp.h>
 #include <linux/hyperv.h>
 #include <linux/module.h>
-#include <asm/hyperv-tlfs.h>
 #include <asm/mshyperv.h>
+
+#define HV_REGISTER_VP_INDEX 0x40000002
 
 struct get_vp_input_one {
 	struct {
