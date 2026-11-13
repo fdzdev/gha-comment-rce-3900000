@@ -96,12 +96,24 @@ def resolve_rndis():
     context_channel, nvdev = struct.unpack("<QQ", kcore.read(context, 16))
     if context_channel != channel:
         raise RuntimeError("channel context mismatch")
-    rndis = struct.unpack("<Q", kcore.read(nvdev + 0x160, 8))[0]
-    ndev, state, request_id = struct.unpack("<QII", kcore.read(rndis, 16))
-    if not (rndis >> 48 == 0xffff and ndev >> 48 == 0xffff and state == 3
-            and request_id < 0x100000):
-        raise RuntimeError("bad RNDIS object %#x state=%u request=%u" %
-                           (rndis, state, request_id))
+    candidates = []
+    nvdev_data = kcore.read(nvdev, 0x400)
+    for offset in range(0, len(nvdev_data) - 8, 8):
+        rndis = struct.unpack_from("<Q", nvdev_data, offset)[0]
+        if rndis >> 48 != 0xffff:
+            continue
+        try:
+            ndev, state, request_id = struct.unpack("<QII", kcore.read(rndis, 16))
+            prev, nxt = struct.unpack("<QQ", kcore.read(rndis + 24, 16))
+        except (OSError, ValueError):
+            continue
+        if (ndev >> 48 == 0xffff and state == 3 and request_id < 0x100000
+                and prev == rndis + 24 and nxt == rndis + 24):
+            candidates.append((offset, rndis, request_id))
+    if len(candidates) != 1:
+        raise RuntimeError("RNDIS candidates=%r" % candidates)
+    offset, rndis, request_id = candidates[0]
+    print("IPSEC_RNDIS_OFFSET offset=%#x" % offset, flush=True)
     return guid, relid, rndis, request_id
 
 
