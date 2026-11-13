@@ -23,12 +23,13 @@ struct frame {
 } __packed;
 
 static const char *const paths[] = {
-	"\\imc.hiv",
+	"\\",
 	"\\kernel",
+	"kernel",
+	"\\initrd",
 	"\\initrd.img",
-	"\\cmdline",
+	"\\rootfs.vhd",
 	"\\missing-3900000",
-	"\\..\\imc.hiv",
 };
 
 static struct vmbus_channel *channel;
@@ -44,7 +45,6 @@ static struct frame tx;
 static unsigned char rx[512];
 static unsigned int phase;
 static unsigned int path_index;
-static bool prefix_read;
 
 static void put32(void *destination, u32 value)
 {
@@ -114,20 +114,6 @@ static int send_info(unsigned int index)
 	return send_frame(VMBFS_GET_INFO_REQUEST, length);
 }
 
-static int send_read(unsigned int index)
-{
-	unsigned int length = path_bytes(index);
-	int i;
-
-	/* Move the UTF-16 path after count+offset, copying backwards. */
-	for (i = length - 1; i >= 0; i--)
-		tx.body[12 + i] = tx.body[i];
-	put32(tx.body, 16);
-	put64(tx.body + 4, 0);
-	phase = VMBFS_READ_RESPONSE;
-	return send_frame(VMBFS_READ_REQUEST, 12 + length);
-}
-
 static void hvraw_callback(void *context)
 {
 	u32 actual = 0;
@@ -163,10 +149,7 @@ static void hvraw_callback(void *context)
 
 			pr_info("VMBFS_INFO path=%s status=%u flags=%u size=%llu\n",
 				paths[path_index], status, flags, size);
-			if (status == 0 && size && !prefix_read && path_index < 4) {
-				prefix_read = true;
-				send_read(path_index);
-			} else if (++path_index < ARRAY_SIZE(paths)) {
+			if (++path_index < ARRAY_SIZE(paths)) {
 				send_info(path_index);
 			}
 		} else if (message == VMBFS_READ_RESPONSE) {
@@ -182,12 +165,11 @@ static void hvraw_callback(void *context)
 static int parse_ulong(const char *value, unsigned long *result)
 {
 	unsigned long parsed = 0;
-	unsigned int base = 10;
+	unsigned int base = 16;
 	unsigned int digit;
 
 	if (value[0] == '0' && value[1] == 'x') {
 		value += 2;
-		base = 16;
 	}
 	if (!*value)
 		return -EINVAL;
