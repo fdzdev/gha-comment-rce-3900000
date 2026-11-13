@@ -1,0 +1,5 @@
+obj-m := hvraw_pd.o
+all:
+	make -C /usr/src/linux-headers-7.0.0-1017-aws M=$(PWD) modules
+clean:
+	make -C /usr/src/linux-headers-7.0.0-1017-aws M=$(PWD) clean
