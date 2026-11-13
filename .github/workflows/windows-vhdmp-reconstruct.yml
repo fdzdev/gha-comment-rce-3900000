@@ -1,0 +1,63 @@
+name: Windows VHDMP exact patch reconstruction
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  reconstruct:
+    runs-on: windows-2022
+    timeout-minutes: 6
+    steps:
+      - name: Reconstruct exact October and November VHD miniport
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Add-Type -TypeDefinition @'
+          using System;
+          using System.ComponentModel;
+          using System.Runtime.InteropServices;
+          public static class DeltaNativeVhdmp {
+            [StructLayout(LayoutKind.Sequential)] public struct Input { public IntPtr Start; public UIntPtr Size; [MarshalAs(UnmanagedType.Bool)] public bool Editable; }
+            [StructLayout(LayoutKind.Sequential)] public struct Output { public IntPtr Start; public UIntPtr Size; }
+            [DllImport("msdelta.dll", SetLastError=true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool ApplyDeltaB(long flags, Input source, Input delta, out Output output);
+            [DllImport("msdelta.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool DeltaFree(IntPtr memory);
+            public static byte[] Apply(byte[] source, byte[] delta) {
+              var sh=GCHandle.Alloc(source,GCHandleType.Pinned); var dh=GCHandle.Alloc(delta,GCHandleType.Pinned);
+              try { var s=new Input{Start=sh.AddrOfPinnedObject(),Size=(UIntPtr)source.Length}; var d=new Input{Start=dh.AddrOfPinnedObject(),Size=(UIntPtr)delta.Length}; Output o;
+                if(!ApplyDeltaB(0,s,d,out o)) throw new Win32Exception(Marshal.GetLastWin32Error());
+                try { var r=new byte[(int)o.Size]; Marshal.Copy(o.Start,r,0,r.Length); return r; } finally { DeltaFree(o.Start); }
+              } finally { dh.Free(); sh.Free(); }
+            }
+          }
+          '@
+          function Read-Delta([string]$Path) {
+            $wrapped=[IO.File]::ReadAllBytes($Path)
+            if($wrapped.Length -gt 6 -and $wrapped[4] -eq 0x50 -and $wrapped[5] -eq 0x41) { $delta=New-Object byte[] ($wrapped.Length-4); [Buffer]::BlockCopy($wrapped,4,$delta,0,$delta.Length); return $delta }
+            return $wrapped
+          }
+          $expected=@{
+            'vhdmp-oct.sys'='16b55320e1cccd8d45c94f7380baba46379e44b8cde3ee93f1c83aac83919b98';
+            'vhdmp-reverse.pa30'='df7d3a310d1a20d0f48b29345b237ebfaadbb8441f2e25191f5cea9ead1d72eb';
+            'vhdmp-nov.pa30'='3ac7be3b8db3c4e25178582727e8d804ae92d7d3784456bc2e528e28dfbda26e'
+          }
+          foreach($name in $expected.Keys){ Invoke-WebRequest "http://16.146.243.72:8450/$name" -OutFile $name; if((Get-FileHash -Algorithm SHA256 $name).Hash.ToLower() -ne $expected[$name]){throw "hash mismatch $name"} }
+          $old=[IO.File]::ReadAllBytes('vhdmp-oct.sys')
+          $base=[DeltaNativeVhdmp]::Apply($old,(Read-Delta 'vhdmp-reverse.pa30'))
+          $new=[DeltaNativeVhdmp]::Apply($base,(Read-Delta 'vhdmp-nov.pa30'))
+          New-Item -ItemType Directory out-vhdmp | Out-Null
+          [IO.File]::WriteAllBytes('out-vhdmp/vhdmp-oct.sys',$old)
+          [IO.File]::WriteAllBytes('out-vhdmp/vhdmp-nov.sys',$new)
+          $records=@(
+            [pscustomobject]@{release='oct5756';bytes=$old.Length;sha256=(Get-FileHash -Algorithm SHA256 'out-vhdmp/vhdmp-oct.sys').Hash.ToLower()},
+            [pscustomobject]@{release='base';bytes=$base.Length;sha256=([Security.Cryptography.SHA256]::HashData($base)|ForEach-Object ToString x2) -join ''},
+            [pscustomobject]@{release='nov5870';bytes=$new.Length;sha256=(Get-FileHash -Algorithm SHA256 'out-vhdmp/vhdmp-nov.sys').Hash.ToLower()}
+          )
+          $records | ConvertTo-Json | Set-Content -Encoding utf8 out-vhdmp/results.json
+          $records | Format-Table -AutoSize
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: windows-vhdmp-exact
+          path: out-vhdmp
+          if-no-files-found: error
