@@ -66,11 +66,6 @@ struct pd_req {
 static unsigned long send_fn;
 static unsigned long recv_fn;
 
-typedef int (*vmbus_sendpacket_t)(struct vmbus_channel *, const void *, u32,
-				  u64, enum vmbus_packet_type, u32);
-typedef int (*vmbus_recvpacket_t)(struct vmbus_channel *, void *, u32, u32 *,
-				  u64 *);
-
 static void quiet_callback(void *context)
 {
 }
@@ -78,6 +73,28 @@ static void quiet_callback(void *context)
 static int ulong_set(const char *value, const struct kernel_param *parameter)
 {
 	return kstrtoull(value, 0, (unsigned long long *)parameter->arg);
+}
+
+/* Call exported hv_vmbus functions by kallsyms address so the module links
+ * without a modversioned dependency on hv_vmbus (depends= must stay empty). */
+static long call6(unsigned long function, unsigned long a1, unsigned long a2,
+		  unsigned long a3, unsigned long a4, unsigned long a5,
+		  unsigned long a6)
+{
+	register unsigned long reg_di asm("rdi") = a1;
+	register unsigned long reg_si asm("rsi") = a2;
+	register unsigned long reg_dx asm("rdx") = a3;
+	register unsigned long reg_c asm("rcx") = a4;
+	register unsigned long reg_8 asm("r8") = a5;
+	register unsigned long reg_9 asm("r9") = a6;
+	unsigned long out = function;
+
+	asm volatile("call *%%rax"
+		     : "+a"(out), "+r"(reg_di), "+r"(reg_si), "+r"(reg_dx),
+		       "+r"(reg_c), "+r"(reg_8), "+r"(reg_9)
+		     :
+		     : "r10", "r11", "cc", "memory");
+	return (long)out;
 }
 
 static int do_probe(void)
@@ -145,18 +162,20 @@ static int do_probe(void)
 	channel->onchannel_callback = quiet_callback;
 	channel->channel_callback_context = NULL;
 
-	error = ((vmbus_sendpacket_t)send_fn)(
-		channel, &request, send_length, 0x4d5954480000ULL + op,
-		VM_PKT_DATA_INBAND, VMBUS_DATA_PACKET_FLAG_COMPLETION_REQUESTED);
+	error = (int)call6(send_fn, (unsigned long)channel,
+			   (unsigned long)&request, send_length,
+			   0x4d5954480000ULL + op, VM_PKT_DATA_INBAND,
+			   VMBUS_DATA_PACKET_FLAG_COMPLETION_REQUESTED);
 	pr_info("HVPD send op=%u len=%u err=%d\n", op, send_length, error);
 
 	deadline = jiffies + msecs_to_jiffies(wait_ms);
 	while (time_before(jiffies, deadline)) {
 		actual = 0;
 		request_id = 0;
-		error = ((vmbus_recvpacket_t)recv_fn)(channel, response,
-						       sizeof(response), &actual,
-						       &request_id);
+		error = (int)call6(recv_fn, (unsigned long)channel,
+				   (unsigned long)response, sizeof(response),
+				   (unsigned long)&actual,
+				   (unsigned long)&request_id, 0);
 		if (error || (!actual && !request_id)) {
 			usleep_range(500, 1500);
 			continue;
