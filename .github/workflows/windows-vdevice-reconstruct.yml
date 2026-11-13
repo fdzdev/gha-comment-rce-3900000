@@ -16,7 +16,7 @@ jobs:
           $ErrorActionPreference = 'Continue'
           New-Item -ItemType Directory -Force out-storage | Out-Null
           $records = @()
-          foreach ($name in @('storvsp.sys','vmsynthstor.dll')) {
+          foreach ($name in @('storvsp.sys','vmsynthstor.dll','vhdmp.sys','vhdparser.sys')) {
             $paths = @(
               "$env:WINDIR\System32\drivers\$name",
               "$env:WINDIR\System32\$name"
