@@ -35,6 +35,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $hostName = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Virtual Machine\Guest\Parameters').PhysicalHostNameFullyQualified
+          Get-Disk | Where-Object FriendlyName -like '*NVMe Direct*' | Select-Object Number,FriendlyName,SerialNumber,PartitionStyle,IsBoot,IsSystem,IsReadOnly,IsOffline,Size
           $disk = Get-Disk | Where-Object { $_.FriendlyName -like '*NVMe Direct*' -and -not $_.IsBoot -and -not $_.IsSystem -and -not $_.IsReadOnly -and $_.Size -gt 268435456 } | Select-Object -First 1
           if (-not $disk) { Start-Sleep -Seconds 25; exit 0 }
           $serial = ($disk.SerialNumber -replace '[^0-9A-Fa-f_]', '').Trim('_')
