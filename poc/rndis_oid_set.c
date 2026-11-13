@@ -73,8 +73,8 @@ static void execute(void)
     unsigned int iteration;
 
     if ((request_type != 4 && request_type != 5) ||
-        input_length > MAX_INPUT || count > 256 ||
-        (hex_length && hex_length != input_length * 2)) {
+        input_length > MAX_INPUT || count > 256 || (hex_length & 1) ||
+        hex_length > input_length * 2) {
         pr_info("rndis_oid_set invalid input_length=%u hex_length=%zu count=%u\n",
                 input_length, hex_length, count);
         return;
@@ -113,7 +113,7 @@ static void execute(void)
         *(u32 *)(wire + 0x10) = input_length;
         *(u32 *)(wire + 0x14) = 20;
         *(u32 *)(wire + 0x18) = 0;
-        if (hex_length && hex2bin(wire + 0x1c, data_hex, input_length)) {
+        if (hex_length && hex2bin(wire + 0x1c, data_hex, hex_length / 2)) {
             pr_info("rndis_oid_set iteration=%u invalid_hex\n", iteration);
             call_put(rndis_device, request);
             return;
