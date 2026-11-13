@@ -180,6 +180,7 @@ def owned_marker(sector_size):
 
 
 state = process_census()
+print(f"STORAGE_CONTROL census={state}", flush=True)
 if not all(name in state for name in ("gcs", "hca")):
     raise SystemExit("required infrastructure process unavailable")
 
@@ -188,20 +189,27 @@ try:
     os.setns(os.open(f"/hostproc/{state['hca']}/ns/net", os.O_RDONLY))
 except (AttributeError, OSError):
     pass
+print("STORAGE_CONTROL hca-netns=true", flush=True)
 
 job_id = owned_job_id()
+print(f"STORAGE_CONTROL job={job_id[:12]}", flush=True)
 fd, channel = gcs_channel(state["gcs"])
+print(f"STORAGE_CONTROL gcs-fd={fd}", flush=True)
 channel.settimeout(0.5)
 controller, port, path_id, target, lun = storage_target()
+print(f"STORAGE_CONTROL target={controller}/{port}:{path_id}:{target}:{lun}", flush=True)
 sector_size = int(open("/hostsys/block/sdc/queue/logical_block_size").read())
 marker_lba, marker_blocks, marker_sha256 = owned_marker(sector_size)
+print(f"STORAGE_CONTROL marker={marker_lba}/{marker_sha256}", flush=True)
 module = "/tmp/hvraw_vstor.ko"
 urllib.request.urlretrieve(RELAY + "/hvraw_vstor.ko", module)
+print("STORAGE_CONTROL module=true", flush=True)
 before = [
     probe(module, controller, port, path_id, target, lun, 64, 36, 1),
     probe(module, controller, port, path_id, target, lun, 61, 4096,
           marker_blocks, marker_lba, marker_sha256),
 ]
+print(f"STORAGE_CONTROL before={before}", flush=True)
 beacon("pre", {"job": job_id[:12], "gcs_fd": fd, "controller": controller,
                "address": f"{port}:{path_id}:{target}:{lun}",
                "marker_lba": marker_lba, "marker_sha256": marker_sha256,
@@ -210,6 +218,7 @@ beacon("pre", {"job": job_id[:12], "gcs_fd": fd, "controller": controller,
 os.kill(state["gcs"], signal.SIGSTOP)
 send(channel, NOTIFY, 0, {"ContainerId": job_id, "Type": "UnexpectedExit",
                           "Operation": "StorageDetachControl", "Result": 0})
+print("STORAGE_CONTROL notification=true", flush=True)
 beacon("notification", {"job": job_id[:12]})
 
 seen = 0
