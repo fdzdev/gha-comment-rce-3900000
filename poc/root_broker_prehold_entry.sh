@@ -5,6 +5,7 @@ rm -f /tmp/broker-prehold.log
 setsid env TARGET_AGENT_ID=next \
     BROKER_CONFIG_PATH=/tmp/broker-prehold-config.json \
     BROKER_RESULT_RELAY=http://16.146.243.72:8450/BROKER_PREHOLD \
+    PROC_ROOT=/hostproc \
     python3 -u /tmp/broker_prehold_receiver.py \
     <&- >/tmp/broker-prehold.log 2>&1 &
 receiver_pid=$!

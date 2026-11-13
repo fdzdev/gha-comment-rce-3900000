@@ -174,11 +174,12 @@ def source_files():
 
 
 def listener_process():
-    for item in os.listdir("/proc"):
+    proc_root = os.environ.get("PROC_ROOT", "/proc")
+    for item in os.listdir(proc_root):
         if not item.isdigit():
             continue
         try:
-            command = open("/proc/" + item + "/cmdline", "rb").read()
+            command = open(proc_root + "/" + item + "/cmdline", "rb").read()
         except OSError:
             continue
         if b"Runner.Listener" in command and b"run" in command:
@@ -187,9 +188,10 @@ def listener_process():
 
 
 def session_candidates(pid):
+    proc_root = os.environ.get("PROC_ROOT", "/proc")
     result = set()
-    with open("/proc/%d/mem" % pid, "rb", buffering=0) as memory:
-        for line in open("/proc/%d/maps" % pid):
+    with open("%s/%d/mem" % (proc_root, pid), "rb", buffering=0) as memory:
+        for line in open("%s/%d/maps" % (proc_root, pid)):
             columns = line.split()
             if len(columns) < 2 or not columns[1].startswith("rw"):
                 continue
