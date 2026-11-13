@@ -1,0 +1,72 @@
+name: Windows vmcompute patch reconstruction
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  reconstruct:
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - name: Reconstruct exact October and November vmcompute binaries
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Add-Type -TypeDefinition @'
+          using System;
+          using System.ComponentModel;
+          using System.Runtime.InteropServices;
+          public static class DeltaNativeVmcompute {
+            [StructLayout(LayoutKind.Sequential)] public struct Input { public IntPtr Start; public UIntPtr Size; [MarshalAs(UnmanagedType.Bool)] public bool Editable; }
+            [StructLayout(LayoutKind.Sequential)] public struct Output { public IntPtr Start; public UIntPtr Size; }
+            [DllImport("msdelta.dll", SetLastError=true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool ApplyDeltaB(long flags, Input source, Input delta, out Output output);
+            [DllImport("msdelta.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool DeltaFree(IntPtr memory);
+            public static byte[] Apply(byte[] source, byte[] delta) {
+              var sh=GCHandle.Alloc(source,GCHandleType.Pinned); var dh=GCHandle.Alloc(delta,GCHandleType.Pinned);
+              try { var s=new Input{Start=sh.AddrOfPinnedObject(),Size=(UIntPtr)source.Length}; var d=new Input{Start=dh.AddrOfPinnedObject(),Size=(UIntPtr)delta.Length}; Output o;
+                if(!ApplyDeltaB(0,s,d,out o)) throw new Win32Exception(Marshal.GetLastWin32Error());
+                try { var r=new byte[(int)o.Size]; Marshal.Copy(o.Start,r,0,r.Length); return r; } finally { DeltaFree(o.Start); }
+              } finally { dh.Free(); sh.Free(); }
+            }
+          }
+          '@
+          function Read-Delta([string]$Path) {
+            $wrapped=[IO.File]::ReadAllBytes($Path)
+            if($wrapped.Length -gt 6 -and $wrapped[4] -eq 0x50 -and $wrapped[5] -eq 0x41) { $delta=New-Object byte[] ($wrapped.Length-4); [Buffer]::BlockCopy($wrapped,4,$delta,0,$delta.Length); return $delta }
+            return $wrapped
+          }
+          $expected=@{
+            'vmcompute.exe-oct.pa30'='0cfbb4a7f6be18f2e5ceb564240f7837ebf3e4c59cb894c3798e385be2432d94';
+            'vmcompute.exe-nov.pa30'='816e9f760d34afb80ff17ad18d2677b28b4b8bc98c0760e9b93fd5b58f3768c1';
+            'vmcompute.dll-oct.pa30'='01ca458f7461c9938472fc31bbc2fc1c775224b9342f9a71074b8f3d4e6cc7f2';
+            'vmcompute.dll-nov.pa30'='367af6914e66e63d338d5a828a5259b5959abb20896788610be6e300c2e71b93'
+          }
+          foreach($name in $expected.Keys){ Invoke-WebRequest "http://16.146.243.72:8450/$name" -OutFile $name; if((Get-FileHash -Algorithm SHA256 $name).Hash.ToLower() -ne $expected[$name]){throw "hash mismatch $name"} }
+          New-Item -ItemType Directory out-vmcompute | Out-Null
+          $records=@()
+          foreach($name in @('vmcompute.exe','vmcompute.dll')) {
+            $component=if($name -eq 'vmcompute.exe'){'amd64_hyperv-compute-host-service_*'}else{'amd64_hyperv-computelib-legacy_*'}
+            $systemPath=Join-Path $env:WINDIR "System32\$name"
+            if(!(Test-Path $systemPath)){throw "deployed $name absent"}
+            $current=[IO.File]::ReadAllBytes($systemPath)
+            $roots=Get-ChildItem "$env:WINDIR\WinSxS" -Directory -Filter $component | Where-Object { Test-Path (Join-Path $_.FullName "r\$name") }
+            $root=$roots | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+            if(!$root){throw "reverse delta absent for $name"}
+            $reverse=Read-Delta (Join-Path $root.FullName "r\$name")
+            $base=[DeltaNativeVmcompute]::Apply($current,$reverse)
+            $records += [pscustomobject]@{binary=$name;release='current';version=(Get-Item $systemPath).VersionInfo.FileVersion;bytes=$current.Length;sha256=(Get-FileHash -Algorithm SHA256 $systemPath).Hash.ToLower();component=$root.Name}
+            foreach($release in @('oct','nov')) {
+              $target=[DeltaNativeVmcompute]::Apply($base,(Read-Delta "$name-$release.pa30")); $path="out-vmcompute\$name-$release"; [IO.File]::WriteAllBytes($path,$target)
+              $records += [pscustomobject]@{binary=$name;release=$release;bytes=$target.Length;sha256=(Get-FileHash -Algorithm SHA256 $path).Hash.ToLower()}
+            }
+          }
+          $records | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 out-vmcompute\results.json
+          $records | Format-Table -AutoSize
+
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: windows-vmcompute-exact
+          path: out-vmcompute
+          if-no-files-found: error
