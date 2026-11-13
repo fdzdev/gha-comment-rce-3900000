@@ -36,14 +36,18 @@ class KCore:
 
 
 def symbol(name, prefix=False):
-    hits = []
+    exact = []
+    prefixed = []
     with open("/proc/kallsyms") as stream:
         for line in stream:
             fields = line.split()
             if len(fields) < 3 or fields[1].lower() != "t":
                 continue
-            if fields[2] == name or (prefix and fields[2].startswith(name)):
-                hits.append((fields[2], int(fields[0], 16)))
+            if fields[2] == name:
+                exact.append((fields[2], int(fields[0], 16)))
+            elif prefix and fields[2].startswith(name):
+                prefixed.append((fields[2], int(fields[0], 16)))
+    hits = exact or prefixed
     if len(hits) != 1:
         raise RuntimeError("symbol %s hits=%r" % (name, hits))
     return hits[0][1]
