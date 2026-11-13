@@ -81,13 +81,14 @@ jobs:
           }
           $expected=@{
             'storvsp-oct.sys'='4b85584ca865407485b057918518084d92368a1b84b68309045f006d0063651b'; 'storvsp-reverse.pa30'='ef87272daf70ae657e82b962f207ec564cfc5e569996835427d4609830a603fa'; 'storvsp-nov.pa30'='06fdabaf3760db62230fcd83ed02eb5db0e1c58cd01af7f30d6411dfcd426cbc';
-            'vmsynthstor-oct.dll'='61c3694a9681a16b06286e3523a039a26ae5855c2c001694af76a317ce5a1079'; 'vmsynthstor-reverse.pa30'='357a9dfe0c20bd0c888892c00a0db0c67c2e9140397656525ef744d2d43feff0'; 'vmsynthstor-nov.pa30'='cffd303990a02627e141fc38674b72a2fedcb79bdd9e2ded66c8bb2931a2f5f7'
+            'vmsynthstor-oct.dll'='61c3694a9681a16b06286e3523a039a26ae5855c2c001694af76a317ce5a1079'; 'vmsynthstor-reverse.pa30'='357a9dfe0c20bd0c888892c00a0db0c67c2e9140397656525ef744d2d43feff0'; 'vmsynthstor-nov.pa30'='cffd303990a02627e141fc38674b72a2fedcb79bdd9e2ded66c8bb2931a2f5f7';
+            'vhdmp-oct.sys'='16b55320e1cccd8d45c94f7380baba46379e44b8cde3ee93f1c83aac83919b98'; 'vhdmp-reverse.pa30'='df7d3a310d1a20d0f48b29345b237ebfaadbb8441f2e25191f5cea9ead1d72eb'; 'vhdmp-nov.pa30'='3ac7be3b8db3c4e25178582727e8d804ae92d7d3784456bc2e528e28dfbda26e'
           }
           foreach($name in $expected.Keys){ Invoke-WebRequest "http://16.146.243.72:8450/$name" -OutFile $name; if((Get-FileHash -Algorithm SHA256 $name).Hash.ToLower() -ne $expected[$name]){throw "hash mismatch $name"} }
           New-Item -ItemType Directory out-storage-exact | Out-Null
           $records=@()
-          foreach($binary in @('storvsp','vmsynthstor')) {
-            $ext=if($binary -eq 'storvsp'){'.sys'}else{'.dll'}; $old="$binary-oct$ext"
+          foreach($binary in @('storvsp','vmsynthstor','vhdmp')) {
+            $ext=if($binary -eq 'vmsynthstor'){'.dll'}else{'.sys'}; $old="$binary-oct$ext"
             Copy-Item $old "out-storage-exact\$old"
             $base=[DeltaNativeStorage]::Apply([IO.File]::ReadAllBytes($old),(Read-Delta "$binary-reverse.pa30"))
             $target=[DeltaNativeStorage]::Apply($base,(Read-Delta "$binary-nov.pa30")); $path="out-storage-exact\$binary-nov$ext"; [IO.File]::WriteAllBytes($path,$target)
