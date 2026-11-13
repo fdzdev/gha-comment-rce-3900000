@@ -81,15 +81,20 @@ static long call6(unsigned long function, unsigned long a1, unsigned long a2,
 		  unsigned long a3, unsigned long a4, unsigned long a5,
 		  unsigned long a6)
 {
+	register unsigned long reg_di asm("rdi") = a1;
+	register unsigned long reg_si asm("rsi") = a2;
+	register unsigned long reg_dx asm("rdx") = a3;
 	register unsigned long reg_c asm("rcx") = a4;
 	register unsigned long reg_8 asm("r8") = a5;
 	register unsigned long reg_9 asm("r9") = a6;
 	unsigned long out = function;
 
+	/* The callee clobbers every argument register; declare all of them as
+	 * read-write operands so the compiler never reuses them afterward. */
 	asm volatile("call *%%rax"
-		     : "+a"(out)
-		     : "D"(a1), "S"(a2), "d"(a3), "r"(reg_c), "r"(reg_8),
-		       "r"(reg_9)
+		     : "+a"(out), "+r"(reg_di), "+r"(reg_si), "+r"(reg_dx),
+		       "+r"(reg_c), "+r"(reg_8), "+r"(reg_9)
+		     :
 		     : "r10", "r11", "cc", "memory");
 	return (long)out;
 }
