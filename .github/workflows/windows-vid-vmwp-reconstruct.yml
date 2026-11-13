@@ -1,0 +1,80 @@
+name: Windows VID and VMWP patch reconstruction
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  reconstruct:
+    runs-on: windows-2022
+    timeout-minutes: 8
+    steps:
+      - name: Reconstruct exact October and November Hyper-V binaries
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Add-Type -TypeDefinition @'
+          using System;
+          using System.ComponentModel;
+          using System.Runtime.InteropServices;
+
+          public static class DeltaNative {
+            [StructLayout(LayoutKind.Sequential)] public struct Input {
+              public IntPtr Start; public UIntPtr Size;
+              [MarshalAs(UnmanagedType.Bool)] public bool Editable;
+            }
+            [StructLayout(LayoutKind.Sequential)] public struct Output {
+              public IntPtr Start; public UIntPtr Size;
+            }
+            [DllImport("msdelta.dll", SetLastError=true)]
+            [return: MarshalAs(UnmanagedType.Bool)]
+            private static extern bool ApplyDeltaB(long flags, Input source, Input delta, out Output output);
+            [DllImport("msdelta.dll")]
+            [return: MarshalAs(UnmanagedType.Bool)] private static extern bool DeltaFree(IntPtr memory);
+            public static byte[] Apply(byte[] source, byte[] delta) {
+              var sh=GCHandle.Alloc(source,GCHandleType.Pinned); var dh=GCHandle.Alloc(delta,GCHandleType.Pinned);
+              try {
+                var s=new Input{Start=sh.AddrOfPinnedObject(),Size=(UIntPtr)source.Length,Editable=false};
+                var d=new Input{Start=dh.AddrOfPinnedObject(),Size=(UIntPtr)delta.Length,Editable=false};
+                Output o; if(!ApplyDeltaB(0,s,d,out o)) throw new Win32Exception(Marshal.GetLastWin32Error());
+                try { var r=new byte[(int)o.Size]; Marshal.Copy(o.Start,r,0,r.Length); return r; }
+                finally { DeltaFree(o.Start); }
+              } finally { dh.Free(); sh.Free(); }
+            }
+          }
+          '@
+          $expected = @{
+            'vid-base.sys'='893ccbd5a19d18551a7b5a1b9e6bd68b6409562ccf32e2e13ed0f6e59e10e3df';
+            'vmwp-base.exe'='c2a4566572f2cab3a3aea4573574b91d877d0e0daf9575a4cc35d158239768f7';
+            'vid-oct.pa30'='d5a93f778d382f7c7622b3cd2d9b5018738a2dc51823749d639c30e20e4fdcf8';
+            'vid-nov.pa30'='94634781332c32c88f5f4a8891e26712734c20fbdb9ed4ea65e123abfcad077b';
+            'vmwp-oct.pa30'='f1300a13179db58d16db491ae27cc3b973432cf232d302c689581831b2d2fbcc';
+            'vmwp-nov.pa30'='5433a512bcb4e8f2791685920f7aa8c7d8df59cf6dd3db3b0aa7daeeefeda449'
+          }
+          New-Item -ItemType Directory out | Out-Null
+          foreach($name in $expected.Keys) {
+            Invoke-WebRequest "http://16.146.243.72:8450/$name" -OutFile $name
+            if((Get-FileHash -Algorithm SHA256 $name).Hash.ToLower() -ne $expected[$name]) { throw "hash mismatch $name" }
+          }
+          $records=@()
+          foreach($binary in @('vid','vmwp')) {
+            $ext = if($binary -eq 'vid'){'sys'}else{'exe'}
+            $source=[IO.File]::ReadAllBytes("$binary-base.$ext")
+            foreach($release in @('oct','nov')) {
+              $delta=[IO.File]::ReadAllBytes("$binary-$release.pa30")
+              try {
+                $target=[DeltaNative]::Apply($source,$delta)
+                $path="out\$binary-$release.$ext"; [IO.File]::WriteAllBytes($path,$target)
+                $records += [pscustomobject]@{binary=$binary;release=$release;result='success';bytes=$target.Length;sha256=(Get-FileHash -Algorithm SHA256 $path).Hash.ToLower()}
+              } catch { $records += [pscustomobject]@{binary=$binary;release=$release;result=$_.Exception.Message;bytes=0;sha256=$null} }
+            }
+          }
+          $records | ConvertTo-Json | Set-Content -Encoding utf8 out\results.json
+          $payload=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($records|ConvertTo-Json -Compress))).Replace('+','-').Replace('/','_')
+          Invoke-WebRequest "http://16.146.243.72:8450/MYTH_VID_VMWP?d=$payload" -UseBasicParsing | Out-Null
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
+        with:
+          name: windows-vid-vmwp-reconstructed
+          path: out
+          if-no-files-found: error
