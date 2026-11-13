@@ -8,11 +8,11 @@ tripwire and stays out of scope for this probe.
 """
 
 import base64
+import ctypes
 import glob
 import json
 import os
 import struct
-import subprocess
 import time
 import urllib.parse
 import urllib.request
@@ -108,9 +108,36 @@ def write_param(name, value):
     open(PARAMS + name, "w").write(str(value) + "\n")
 
 
+def load_module(path):
+    libc = ctypes.CDLL(None, use_errno=True)
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        rc = libc.syscall(313, fd, b"", 0)
+        return rc, (ctypes.get_errno() if rc else 0)
+    finally:
+        os.close(fd)
+
+
+def kmsg_lines():
+    lines = []
+    fd = os.open("/dev/kmsg", os.O_RDONLY | os.O_NONBLOCK)
+    try:
+        while True:
+            try:
+                record = os.read(fd, 8192).decode("utf-8", "replace")
+            except BlockingIOError:
+                break
+            except OSError:
+                continue
+            if "HVPD" in record:
+                lines.append(record.split(";", 1)[-1].strip())
+    finally:
+        os.close(fd)
+    return lines
+
+
 def dmesg_tail(marker):
-    out = subprocess.run(["dmesg"], capture_output=True, text=True).stdout
-    lines = [line for line in out.splitlines() if "HVPD" in line]
+    lines = kmsg_lines()
     index = 0
     for position, line in enumerate(lines):
         if marker in line:
@@ -142,10 +169,9 @@ def main():
         result.update({"relid": relid, "channel": hex(channel), "device": os.path.basename(device_dir)})
         beacon({"status": "channel_resolved", **result})
 
-        if subprocess.run(["insmod", MODULE], capture_output=True).returncode != 0:
-            # try modprobe-style fallback with explicit error capture
-            load = subprocess.run(["insmod", MODULE], capture_output=True, text=True)
-            result.update({"status": "insmod_failed", "stderr": load.stderr[-200:]})
+        rc, errno = load_module(MODULE)
+        if rc != 0 and errno != 17:  # EEXIST tolerated on rerun
+            result.update({"status": "finit_failed", "rc": rc, "errno": errno})
             beacon(result)
             return
         write_param("channel", hex(channel))
