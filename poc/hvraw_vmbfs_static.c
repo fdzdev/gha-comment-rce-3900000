@@ -137,7 +137,8 @@ static void hvraw_callback(void *context)
 		status = get32(rx + 16);
 		pr_info("VMBFS_RX phase=%u actual=%u pipe=%u/%u msg=%u status=%u\n",
 			phase, actual, pipe_type, pipe_length, message, status);
-		if (pipe_type != PIPE_DATA || pipe_length != actual - 8 ||
+		if (pipe_type != PIPE_DATA || actual < 8 + pipe_length ||
+		    actual > ((8 + pipe_length + 7) & ~7U) ||
 		    message != phase)
 			continue;
 		if (message == VMBFS_VERSION_RESPONSE) {

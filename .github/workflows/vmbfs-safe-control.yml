@@ -24,10 +24,3 @@ jobs:
           done
           sudo cp /tmp/root-auto.log ./root-auto.log 2>/dev/null || true
           grep 'VMBFS_' root-auto.log 2>/dev/null || true
-      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
-        if: always()
-        with:
-          name: vmbfs-safe-control-${{ github.run_id }}
-          path: |
-            root-auto.log
-          if-no-files-found: ignore
