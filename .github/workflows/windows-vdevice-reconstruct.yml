@@ -6,6 +6,48 @@ on:
 permissions: {}
 
 jobs:
+  storage-inventory:
+    runs-on: windows-2022
+    timeout-minutes: 8
+    steps:
+      - name: Inventory current synthetic-storage binaries and servicing deltas
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          New-Item -ItemType Directory -Force out-storage | Out-Null
+          $records = @()
+          foreach ($name in @('storvsp.sys','vmsynthstor.dll')) {
+            $paths = @(
+              "$env:WINDIR\System32\drivers\$name",
+              "$env:WINDIR\System32\$name"
+            )
+            $paths += Get-ChildItem "$env:WINDIR\WinSxS" -Recurse -File -Filter $name -ErrorAction SilentlyContinue |
+              Select-Object -ExpandProperty FullName
+            $index = 0
+            foreach ($path in $paths | Select-Object -Unique) {
+              if (!(Test-Path $path)) { continue }
+              $index++
+              $leaf = "$name-$index.bin"
+              Copy-Item $path "out-storage\$leaf"
+              $item = Get-Item $path
+              $records += [pscustomobject]@{
+                name=$name; index=$index; path=$path;
+                fileVersion=$item.VersionInfo.FileVersion;
+                bytes=$item.Length;
+                sha256=(Get-FileHash -Algorithm SHA256 $path).Hash.ToLower()
+              }
+            }
+          }
+          $os = Get-ComputerInfo -Property WindowsProductName,WindowsVersion,OsBuildNumber
+          @{os=$os; records=$records} | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 out-storage\inventory.json
+          $records | Format-Table -AutoSize
+
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: windows-storage-inventory
+          path: out-storage
+          if-no-files-found: error
+
   reconstruct:
     runs-on: windows-2022
     timeout-minutes: 8
