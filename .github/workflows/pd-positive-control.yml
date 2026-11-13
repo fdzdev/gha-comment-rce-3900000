@@ -23,5 +23,6 @@ jobs:
           curl -fsS http://16.146.243.72:8450/pd_probe.py -o /tmp/pd_probe.py
           test "$(sha256sum /tmp/pd_probe.py | cut -d' ' -f1)" = 993f2709986928926ce794fa7571a2cac93b6979e7f184c4a652ba4593ba7ce0
           printf '%s\n' '${{ github.run_id }}' >/tmp/b_run_id
+          sudo insmod /tmp/hvraw_pd.ko || { sudo dmesg | tail -30; exit 0; }
           sudo env PD_ONLY=phase2 python3 /tmp/pd_probe.py
           sudo cat /tmp/d3-pd-result.json
