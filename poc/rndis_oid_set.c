@@ -4,7 +4,7 @@
 #include <linux/string.h>
 #include <linux/types.h>
 
-#define MAX_INPUT 4000
+#define RNDIS_MAX_INPUT 4000
 
 static unsigned long get_address;
 static unsigned long send_address;
@@ -17,7 +17,7 @@ static unsigned int count = 1;
 static unsigned int timeout_ms = 3000;
 static unsigned int delay_us;
 static unsigned int hold;
-static char data_hex[MAX_INPUT * 2 + 1];
+static char data_hex[RNDIS_MAX_INPUT * 2 + 1];
 static int arm;
 
 static int ulong_set(const char *value, const struct kernel_param *parameter)
@@ -33,13 +33,24 @@ static int uint_set(const char *value, const struct kernel_param *parameter)
 static const struct kernel_param_ops ulong_ops = { .set = ulong_set };
 static const struct kernel_param_ops uint_ops = { .set = uint_set };
 
+static int decode_nibble(char value)
+{
+    if (value >= '0' && value <= '9')
+        return value - '0';
+    if (value >= 'a' && value <= 'f')
+        return value - 'a' + 10;
+    if (value >= 'A' && value <= 'F')
+        return value - 'A' + 10;
+    return -EINVAL;
+}
+
 static int decode_hex(u8 *output, const char *input, size_t input_length)
 {
     size_t index;
 
     for (index = 0; index < input_length; index += 2) {
-        int high = hex_to_bin(input[index]);
-        int low = hex_to_bin(input[index + 1]);
+        int high = decode_nibble(input[index]);
+        int low = decode_nibble(input[index + 1]);
 
         if (high < 0 || low < 0)
             return -EINVAL;
@@ -87,7 +98,7 @@ static void execute(void)
     unsigned int iteration;
 
     if ((request_type != 4 && request_type != 5) ||
-        input_length > MAX_INPUT || count > 256 || (hex_length & 1) ||
+        input_length > RNDIS_MAX_INPUT || count > 256 || (hex_length & 1) ||
         hex_length > input_length * 2) {
         pr_info("rndis_oid_set invalid input_length=%u hex_length=%zu count=%u\n",
                 input_length, hex_length, count);
@@ -166,8 +177,8 @@ static void execute(void)
             u32 result_length = *(u32 *)(response + 0x10);
             u32 result_offset = *(u32 *)(response + 0x14);
 
-            if (result_length <= MAX_INPUT && result_offset <= MAX_INPUT &&
-                result_length + result_offset <= MAX_INPUT)
+            if (result_length <= RNDIS_MAX_INPUT && result_offset <= RNDIS_MAX_INPUT &&
+                result_length + result_offset <= RNDIS_MAX_INPUT)
                 pr_info("rndis_oid_query oid=%#x result_length=%u result_offset=%u head=%*phN\n",
                         oid, result_length, result_offset,
                         min_t(u32, result_length, 64), response + 8 + result_offset);
