@@ -1,5 +1,4 @@
 #include <linux/delay.h>
-#include <linux/hex.h>
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/string.h>
@@ -33,6 +32,21 @@ static int uint_set(const char *value, const struct kernel_param *parameter)
 
 static const struct kernel_param_ops ulong_ops = { .set = ulong_set };
 static const struct kernel_param_ops uint_ops = { .set = uint_set };
+
+static int decode_hex(u8 *output, const char *input, size_t input_length)
+{
+    size_t index;
+
+    for (index = 0; index < input_length; index += 2) {
+        int high = hex_to_bin(input[index]);
+        int low = hex_to_bin(input[index + 1]);
+
+        if (high < 0 || low < 0)
+            return -EINVAL;
+        output[index / 2] = (high << 4) | low;
+    }
+    return 0;
+}
 
 static void *call_get(unsigned long device, u32 type, u32 length)
 {
@@ -113,7 +127,7 @@ static void execute(void)
         *(u32 *)(wire + 0x10) = input_length;
         *(u32 *)(wire + 0x14) = 20;
         *(u32 *)(wire + 0x18) = 0;
-        if (hex_length && hex2bin(wire + 0x1c, data_hex, hex_length / 2)) {
+        if (hex_length && decode_hex(wire + 0x1c, data_hex, hex_length)) {
             pr_info("rndis_oid_set iteration=%u invalid_hex\n", iteration);
             call_put(rndis_device, request);
             return;
