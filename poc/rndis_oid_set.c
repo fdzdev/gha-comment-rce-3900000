@@ -100,8 +100,7 @@ static void execute(void)
     unsigned int iteration;
 
     if ((request_type != 4 && request_type != 5) ||
-        input_length > RNDIS_MAX_INPUT || count > 256 || (hex_length & 1) ||
-        hex_length > input_length * 2) {
+        input_length > RNDIS_MAX_INPUT || count > 256 || (hex_length & 1)) {
         pr_info("rndis_oid_set invalid input_length=%u hex_length=%zu count=%u\n",
                 input_length, hex_length, count);
         return;
@@ -140,7 +139,9 @@ static void execute(void)
         *(u32 *)(wire + 0x10) = input_length;
         *(u32 *)(wire + 0x14) = 20;
         *(u32 *)(wire + 0x18) = 0;
-        if (hex_length && decode_hex(wire + 0x1c, data_hex, hex_length)) {
+        if (input_length && hex_length &&
+            decode_hex(wire + 0x1c, data_hex,
+                       min_t(size_t, hex_length, input_length * 2))) {
             pr_info("rndis_oid_set iteration=%u invalid_hex\n", iteration);
             call_put(rndis_device, request);
             return;
@@ -175,6 +176,9 @@ static void execute(void)
                 iteration, oid, input_length, *(u32 *)response,
                 *(u32 *)(response + 4), *(u32 *)(response + 8),
                 *(u32 *)(response + 0x0c), waited);
+        if (request_type == 5)
+            pr_info("rndis_oid_set_data oid=%#x head=%*phN\n", oid,
+                    min_t(u32, input_length, 64), wire + 0x1c);
         if (request_type == 4) {
             u32 result_length = *(u32 *)(response + 0x10);
             u32 result_offset = *(u32 *)(response + 0x14);
@@ -183,7 +187,7 @@ static void execute(void)
                 result_length + result_offset <= RNDIS_MAX_INPUT)
                 pr_info("rndis_oid_query oid=%#x result_length=%u result_offset=%u head=%*phN\n",
                         oid, result_length, result_offset,
-                        min_t(u32, result_length, 64), response + 8 + result_offset);
+                        min_t(u32, result_length, 192), response + 8 + result_offset);
         }
         call_put(rndis_device, request);
         if (delay_us)

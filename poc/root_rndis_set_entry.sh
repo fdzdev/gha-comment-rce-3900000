@@ -37,20 +37,24 @@ run_case() {
     case_type=$2
     case_oid=$3
     case_hex=$4
-    printf 'RNDIS_SET_CASE label=%s type=%s oid=%s bytes=%s\n' "$label" "$case_type" "$case_oid" "$(( ${#case_hex} / 2 ))"
+    case_length=${5:-$(( ${#case_hex} / 2 ))}
+    printf 'RNDIS_SET_CASE label=%s type=%s oid=%s bytes=%s\n' "$label" "$case_type" "$case_oid" "$case_length"
     printf '%s' "$case_type" >"$paramdir/request_type" || return
     printf '%s' "$case_oid" >"$paramdir/oid" || return
     printf '%s' "$case_hex" >"$paramdir/data_hex" || return
-    printf '%s' "$(( ${#case_hex} / 2 ))" >"$paramdir/input_length" || return
+    printf '%s' "$case_length" >"$paramdir/input_length" || return
     printf 1 >"$paramdir/arm"
 }
 
 [ -d "$paramdir" ] || exit 11
-own_mac=$(dmesg --notime 2>/dev/null | sed -n 's/.*rndis_oid_query oid=0x10102 result_length=6 .*head=\([[:xdigit:]]\{12\}\).*/\1/p' | tail -1)
+own_mac=$(dmesg --notime 2>/dev/null | sed -n 's/.*rndis_oid_query oid=0x1010102 result_length=6 .*head=\([[:xdigit:]]\{12\}\).*/\1/p' | tail -1)
 printf 'RNDIS_SET_HOST queried_mac=%s\n' "$own_mac"
 isolation_header=800118000000000000000000000000000000000000000000
 run_case isolation-query 4 0x00010300 "$isolation_header"
+run_case isolation-query-full 4 0x00010300 "$isolation_header" 4000
 run_case rss-query 4 0x00010204 ''
+run_case ipsec-current-query 4 0xfc01020b ''
+run_case ipsec-hardware-query 4 0xfc01020d ''
 run_case multicast-positive 5 0x01010103 01005e000001
 [ "${#own_mac}" != 12 ] || run_case lbfo-own 5 0xfa010203 "$own_mac"
 run_case lbfo-random 5 0xfa010203 023900000001
@@ -63,9 +67,25 @@ print((head+b'\0'*(512+40)).hex())
 PY
 )
 run_case rss-disable-r2 5 0x00010204 "$rss_disable"
-run_case ipsec-add-empty 5 0xfc030203 ''
-run_case ipsec-delete-empty 5 0xfc030204 ''
-run_case ipsec-update-empty 5 0xfc030205 ''
+ipsec_delete_absent=80011800000000000000000000000000ffffffffffffffff
+ipsec_add_ex=$(python3 - <<'PY'
+import struct
+b=bytearray(0xd0)
+b[0]=0x80; b[1]=1
+struct.pack_into('<H',b,2,0xaa)
+struct.pack_into('<I',b,4,1)
+struct.pack_into('<I',b,0x40,1)
+struct.pack_into('<I',b,0x44,0x11223344)
+struct.pack_into('<IIII',b,0x48,4,32,0,0)
+struct.pack_into('<IIII',b,0x58,1,0,0,0)
+struct.pack_into('<II',b,0x9c,32,0xb0)
+b[0xb0:0xd0]=bytes.fromhex('123456789abcdef0'*4)
+print(b.hex())
+PY
+)
+run_case ipsec-delete-absent 5 0xfc030203 "$ipsec_delete_absent"
+run_case ipsec-update-empty 5 0xfc030204 ''
+run_case ipsec-add-ex 5 0xfc030205 "$ipsec_add_ex"
 
 sleep 2
 dmesg --notime 2>/dev/null | grep -E 'rndis_oid_(set|query)' | tail -40
