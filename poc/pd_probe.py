@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Walk the NVSP v6 PacketDirect API control plane on the live NetVSP channel.
 
-Control-plane ops only (CONFIG, OPEN_PROVIDER, CREATE_QUEUE, ALLOC/FREE paths
-are bounded request/completion exchanges). NvspMessage6TypePdPostBatch is
-never sent: that handler is behind Microsoft's own "Security bug 9234257"
-tripwire and stays out of scope for this probe.
+Starts with a count-zero receive PostBatch to prove the host dispatches the
+handler behind Microsoft's "Security bug 9234257" tripwire, then walks the
+bounded CONFIG/API exchanges.
 """
 
 import base64
@@ -224,9 +223,9 @@ def main():
         write_param("wait_ms", 1500)
 
         ops = []
-        # Positive control: ordinary NVSP1 receive-buffer request. Its error
-        # response proves this probe owns and drains the live inbound ring.
-        ops.append(run_op(90, {}, "nvsp_recvbuf_invalid_control"))
+        # Receiver gate: exact minimum receive PostBatch (count=0,is_recv=1).
+        # It reaches the target handler but contains no PD buffer descriptor.
+        ops.append(run_op(91, {}, "pd_postbatch_zero_control"))
         beacon({"status": "progress", "ops": ops[-1:]})
         # S1: CONFIG with a null MMIO region (pure capability probe).
         ops.append(run_op(1, {"pa": 0, "len": 4096, "sub": 1}, "config_null"))
