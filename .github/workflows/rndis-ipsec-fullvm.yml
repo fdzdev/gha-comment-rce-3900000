@@ -1,0 +1,32 @@
+name: Owned full-VM RNDIS IPsec handler gate
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+      - name: Build and exercise exact IPsec direct OIDs
+        shell: bash
+        run: |
+          set +e
+          echo "IPSEC_HOST uname=$(uname -r) vmbus=$(find /sys/bus/vmbus/devices -mindepth 1 -maxdepth 1 -type l 2>/dev/null | wc -l)"
+          build_dir=$(mktemp -d)
+          cp poc/rndis_oid_set.c poc/Kbuild.rndis_oid_set "$build_dir/"
+          mv "$build_dir/Kbuild.rndis_oid_set" "$build_dir/Makefile"
+          make -C "/lib/modules/$(uname -r)/build" M="$build_dir" modules
+          build_rc=$?
+          echo "IPSEC_BUILD rc=$build_rc module=$(find "$build_dir" -name rndis_oid_set.ko -size +1c | head -1)"
+          if [ "$build_rc" = 0 ]; then
+            sudo python3 poc/rndis_ipsec_fullvm.py "$build_dir/rndis_oid_set.ko"
+            probe_rc=$?
+          else
+            probe_rc=99
+          fi
+          sudo dmesg --notime 2>/dev/null | grep -E 'rndis_oid_(set|query)' | tail -80 || true
+          echo "IPSEC_DONE probe_rc=$probe_rc"
