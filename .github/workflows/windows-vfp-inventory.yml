@@ -1,0 +1,64 @@
+name: Windows VFP exact patch inventory
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  inventory:
+    runs-on: windows-2022
+    timeout-minutes: 6
+    steps:
+      - name: Reconstruct exact October and November VFP component
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Add-Type -TypeDefinition @'
+          using System;
+          using System.ComponentModel;
+          using System.Runtime.InteropServices;
+          public static class DeltaNative {
+            [StructLayout(LayoutKind.Sequential)] public struct Input { public IntPtr Start; public UIntPtr Size; [MarshalAs(UnmanagedType.Bool)] public bool Editable; }
+            [StructLayout(LayoutKind.Sequential)] public struct Output { public IntPtr Start; public UIntPtr Size; }
+            [DllImport("msdelta.dll", SetLastError=true)] [return: MarshalAs(UnmanagedType.Bool)]
+            private static extern bool ApplyDeltaB(long flags, Input source, Input delta, out Output output);
+            [DllImport("msdelta.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool DeltaFree(IntPtr memory);
+            public static byte[] Apply(byte[] source, byte[] delta) {
+              var sh=GCHandle.Alloc(source,GCHandleType.Pinned); var dh=GCHandle.Alloc(delta,GCHandleType.Pinned);
+              try { var s=new Input{Start=sh.AddrOfPinnedObject(),Size=(UIntPtr)source.Length}; var d=new Input{Start=dh.AddrOfPinnedObject(),Size=(UIntPtr)delta.Length};
+                Output o; if(!ApplyDeltaB(0,s,d,out o)) throw new Win32Exception(Marshal.GetLastWin32Error());
+                try { var r=new byte[(int)o.Size]; Marshal.Copy(o.Start,r,0,r.Length); return r; } finally { DeltaFree(o.Start); }
+              } finally { dh.Free(); sh.Free(); }
+            }
+          }
+          '@
+          function Read-Delta([string]$Path) {
+            $wrapped=[IO.File]::ReadAllBytes($Path)
+            if($wrapped.Length -gt 6 -and $wrapped[4] -eq 0x50 -and $wrapped[5] -eq 0x41) {
+              $delta=New-Object byte[] ($wrapped.Length-4); [Buffer]::BlockCopy($wrapped,4,$delta,0,$delta.Length); return $delta
+            }
+            return $wrapped
+          }
+          New-Item -ItemType Directory out | Out-Null
+          $root=Get-ChildItem "$env:WINDIR\WinSxS" -Directory | Where-Object Name -Like 'amd64_microsoft-windows-hyper-v-vfpext_*' | Where-Object {Test-Path (Join-Path $_.FullName 'vfpext.sys')} | Sort-Object Name -Descending | Select-Object -First 1
+          if(!$root){throw 'installed VFP component payload absent'}
+          $records=@()
+          foreach($binary in @('vfpext.sys','vfpctrl.exe','vfpapi.dll')) {
+            $current=Join-Path $root.FullName $binary; $reverse=Join-Path $root.FullName "r\$binary"
+            if(!(Test-Path $current) -or !(Test-Path $reverse)){throw "VFP current/reverse payload absent: $binary"}
+            $base=[DeltaNative]::Apply([IO.File]::ReadAllBytes($current),(Read-Delta $reverse))
+            foreach($release in @('oct','nov')) {
+              $delta="$release-$binary.pa30"; Invoke-WebRequest "http://16.146.243.72:8450/vfp-$release-$binary.pa30" -OutFile $delta
+              $target=[DeltaNative]::Apply($base,(Read-Delta $delta)); $path="out\$release-$binary"; [IO.File]::WriteAllBytes($path,$target)
+              $records += [pscustomobject]@{component=$binary;release=$release;version=([Diagnostics.FileVersionInfo]::GetVersionInfo($path).FileVersion);bytes=$target.Length;sha256=(Get-FileHash -Algorithm SHA256 $path).Hash.ToLower()}
+            }
+          }
+          $records | ConvertTo-Json | Set-Content -Encoding utf8 out\results.json
+          $records | Format-Table -AutoSize
+          "CURRENT_COMPONENT=$($root.Name)"
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: windows-vfp-reconstructed
+          path: out
+          if-no-files-found: error
