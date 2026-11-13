@@ -47,6 +47,11 @@ class FakeRequests:
 
 
 class ReceiverTests(unittest.TestCase):
+    def test_future_window_offset(self):
+        self.assertEqual(MODULE.future_target(1000, "next", 8), 1008)
+        with self.assertRaisesRegex(MODULE.ReceiverError, "invalid_target_offset"):
+            MODULE.future_target(1000, "next", 33)
+
     def test_prehold_uses_one_future_agent_and_returns_only_in_memory(self):
         posts = []
 
@@ -62,11 +67,12 @@ class ReceiverTests(unittest.TestCase):
             b"00000000-0000-0000-0000-000000000001",
             b"00000000-0000-0000-0000-000000000002",
         ]
-        held = MODULE.prehold(
+        held, queued = MODULE.prehold(
             "secret", "https://broker.actions.githubusercontent.com", "2.338.2",
             1000000500, candidates, request_fn=request,
         )
         self.assertEqual(held, "00000000-0000-0000-0000-000000000009")
+        self.assertFalse(queued)
         self.assertEqual(posts[-1]["agent"]["id"], 1000000500)
         self.assertEqual(posts[-1]["agent"]["name"], "GitHub Actions 1000000500")
 

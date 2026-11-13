@@ -23,6 +23,10 @@ on:
         description: Future AgentId offset, 1-32
         default: "8"
         required: true
+      target_agent_id:
+        description: Exact owned target AgentId, or next
+        default: next
+        required: true
 
 permissions:
   contents: read
@@ -38,7 +42,7 @@ jobs:
       RECEIVER_NONCE: ${{ inputs.receiver_nonce }}
       BROKER_HOLD_SECONDS: ${{ inputs.hold_seconds }}
       TARGET_AGENT_OFFSET: ${{ inputs.target_agent_offset }}
-      TARGET_AGENT_ID: next
+      TARGET_AGENT_ID: ${{ inputs.target_agent_id }}
     steps:
       - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
 

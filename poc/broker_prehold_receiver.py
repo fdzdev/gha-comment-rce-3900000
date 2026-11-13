@@ -151,6 +151,8 @@ def parse_json(raw):
 def future_target(source_agent_id, target_text, offset):
     if not 1 <= offset <= 32:
         raise ReceiverError("invalid_target_offset")
+    if target_text != "next" and not target_text.isdigit():
+        raise ReceiverError("invalid_target_agent")
     target = source_agent_id + offset if target_text == "next" else int(target_text)
     if target <= source_agent_id:
         raise ReceiverError("target_is_not_future")
@@ -260,7 +262,8 @@ def prehold(token, base, version, target, candidates, request_fn=request):
         parsed = parse_json(raw)
         held = case_get(parsed, "sessionId")
         if status == 201 and isinstance(held, str) and UUID.fullmatch(held.encode()):
-            return held
+            queued = case_get(parsed, "assignmentQueued")
+            return held, queued is True
     raise ReceiverError("prehold_not_created_" + ",".join(attempts[:12]))
 
 
@@ -279,7 +282,14 @@ def receiver(token, base, version, held, expected_owner, expected_repo, expected
         status, raw = request_fn("GET", suffix, token)
         message = parse_json(raw)
         message_type = case_get(message, "messageType")
-        if status != 200 or message_type != "RunnerJobRequest":
+        if status != 200:
+            time.sleep(0.2)
+            continue
+        if message_type != "RunnerJobRequest":
+            safe_type = (message_type if message_type in (
+                "JobCancellation", "JobMetadata", "HostedRunnerDeprovisioned"
+            ) else "non_job")
+            emit("BROKER_RECEIVER message_type=%s status=ignored" % safe_type)
             time.sleep(0.2)
             continue
         reference_raw = case_get(message, "body")
@@ -377,9 +387,9 @@ def main():
             time.sleep(0.02)
         if state not in ("T", "t"):
             raise ReceiverError("listener_stop_failed")
-        held = prehold(token, base, version, target, candidates)
-        emit("BROKER_RECEIVER state=ready source=%d target=%d" %
-             (source_agent_id, target))
+        held, assignment_queued = prehold(token, base, version, target, candidates)
+        emit("BROKER_RECEIVER state=ready source=%d target=%d assignment_queued=%s" %
+             (source_agent_id, target, str(assignment_queued).lower()))
         receiver(token, base, version, held, owner, repository, run_id, nonce, hold_seconds)
         return 0
     except ReceiverError as error:
