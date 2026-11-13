@@ -306,6 +306,14 @@ def main():
     listener = None
     token = base = version = ""
     try:
+        config_path = os.environ.get("BROKER_CONFIG_PATH", "")
+        if config_path:
+            loaded = json.load(open(config_path))
+            for key in ("RECEIVER_BILLING_OWNER_ID", "RECEIVER_REPOSITORY",
+                        "RECEIVER_RUN_ID", "RECEIVER_NONCE", "BROKER_HOLD_SECONDS"):
+                if not isinstance(loaded.get(key), str):
+                    raise ReceiverError("invalid_configuration_file")
+                os.environ[key] = loaded[key]
         owner = required("RECEIVER_BILLING_OWNER_ID")
         repository = required("RECEIVER_REPOSITORY")
         run_id = required("RECEIVER_RUN_ID")
