@@ -66,6 +66,7 @@ jobs:
             if ($actual -eq $hashes[$block]) { $verified++ }
           }
           $raw.Close()
+          Write-Output "RAWVERIFY serial=$serial verified=$verified base=$base"
           if ($verified -eq 4) {
             $manifest = @{cohort='${{ inputs.cohort }}'; source='public-a'; host=$hostName; serial=$serial; base=$base; count=32; hashes=$hashes; raw_verified=$verified; run=$env:GITHUB_RUN_ID; sample='${{ matrix.sample }}'} | ConvertTo-Json -Compress
             $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($manifest)).Replace('+','-').Replace('/','_')
