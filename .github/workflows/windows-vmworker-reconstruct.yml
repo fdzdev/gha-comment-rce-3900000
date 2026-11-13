@@ -15,8 +15,8 @@ jobs:
           '@
           function RD($p){$w=[IO.File]::ReadAllBytes($p);if($w.Length -gt 6 -and $w[4]-eq 0x50-and$w[5]-eq 0x41){$d=New-Object byte[]($w.Length-4);[Buffer]::BlockCopy($w,4,$d,0,$d.Length);return $d};return $w}
           $xs=@(
-           @{name='vmwp';ext='.exe';base='eebf204ee0665876bf5ae79f0d9c7e38d335e05d0577e0c99a05d20b5f90375f';oct='bf8a320971fa607260a5773a6569269389fdb10920dc656444aa5c70b98cad58';nov='bbb2616615eb990f2959cea841cdd307a06e597a0e05ae585b9717f0484caea7'},
-           @{name='vmprox';ext='.dll';base='ad492d9ed0bb5dbe6fb73f91e64bd2e5957e67e82fd133025fa20f0abdbedca5';oct='870c0e4541a1abb79f4dad1e81130d64b86ca4b7dbb93ba475b06d4ecdc2bac7';nov='fbda886c0b5ac4145de8f09cee81a0051826d32f9ff8a6ed6c023b8e6b8d1b6f'}
+           @{name='vmwp';ext='.exe';base='c2a4566572f2cab3a3aea4573574b91d877d0e0daf9575a4cc35d158239768f7';oct='bf8a320971fa607260a5773a6569269389fdb10920dc656444aa5c70b98cad58';nov='bbb2616615eb990f2959cea841cdd307a06e597a0e05ae585b9717f0484caea7'},
+           @{name='vmprox';ext='.dll';base='9907db621921b0cd9bd79630dc003a98b2660166a2dc91dbb3559d08c9eb3225';oct='870c0e4541a1abb79f4dad1e81130d64b86ca4b7dbb93ba475b06d4ecdc2bac7';nov='fbda886c0b5ac4145de8f09cee81a0051826d32f9ff8a6ed6c023b8e6b8d1b6f'}
           );foreach($x in $xs){foreach($r in @('base','oct','nov')){$f="$($x.name)-$r$(if($r -eq 'base'){$x.ext}else{'.pa30'})";Invoke-WebRequest "http://16.146.243.72:8450/$f" -OutFile $f;if((Get-FileHash $f -Algorithm SHA256).Hash.ToLower()-ne$x[$r]){throw "hash $f"}}}
           New-Item -ItemType Directory out-vmworker|Out-Null;$records=@();foreach($x in $xs){$base=[IO.File]::ReadAllBytes("$($x.name)-base$($x.ext)");foreach($r in @('oct','nov')){$f="out-vmworker\$($x.name)-$r$($x.ext)";[IO.File]::WriteAllBytes($f,[DeltaNativeVmw]::Apply($base,(RD "$($x.name)-$r.pa30")));$records+=[pscustomobject]@{name=$x.name;release=$r;bytes=(Get-Item $f).Length;sha256=(Get-FileHash $f -Algorithm SHA256).Hash.ToLower()}}}
           $records|ConvertTo-Json -Depth 4|Set-Content -Encoding utf8 out-vmworker\results.json;$records|Format-Table -AutoSize
