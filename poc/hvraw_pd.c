@@ -9,6 +9,9 @@
  * Control-plane requests only; NvspMessage6TypePdPostBatch is never sent. */
 
 static unsigned long channel_address;
+static unsigned long callback_address;
+static unsigned long context_address;
+static unsigned long request_id_callback_address;
 static unsigned int op = 1;
 static unsigned long long arg_pa;
 static unsigned int arg_len = 0x1000;
@@ -102,6 +105,10 @@ static long call6(unsigned long function, unsigned long a1, unsigned long a2,
 static int do_probe(void)
 {
 	struct vmbus_channel *channel = (struct vmbus_channel *)channel_address;
+	void (**callback_slot)(void *) = (void *)callback_address;
+	void **context_slot = (void *)context_address;
+	u64 (**request_id_callback_slot)(struct vmbus_channel *, u64) =
+		(void *)request_id_callback_address;
 	void (*saved_callback)(void *context);
 	void *saved_context;
 	u64 (*saved_request_id_callback)(struct vmbus_channel *, u64);
@@ -114,7 +121,8 @@ static int do_probe(void)
 	int packets = 0;
 	u32 send_length = 8;
 
-	if (!channel || !send_fn || !recv_fn)
+	if (!channel || !callback_slot || !context_slot ||
+	    !request_id_callback_slot || !send_fn || !recv_fn)
 		return -EINVAL;
 
 	memset(&request, 0, sizeof(request));
@@ -176,21 +184,21 @@ static int do_probe(void)
 		return -EOPNOTSUPP;
 	}
 
-	saved_callback = channel->onchannel_callback;
-	saved_context = channel->channel_callback_context;
-	saved_request_id_callback = channel->next_request_id_callback;
-	channel->onchannel_callback = quiet_callback;
-	channel->channel_callback_context = NULL;
+	saved_callback = READ_ONCE(*callback_slot);
+	saved_context = READ_ONCE(*context_slot);
+	saved_request_id_callback = READ_ONCE(*request_id_callback_slot);
+	WRITE_ONCE(*callback_slot, quiet_callback);
+	WRITE_ONCE(*context_slot, NULL);
 	/* NetVSP normally maps transaction IDs through the requestor. Disable
 	 * that mapping for this one synchronous exchange so an empty completion
 	 * remains distinguishable from an empty ring. */
-	channel->next_request_id_callback = NULL;
+	WRITE_ONCE(*request_id_callback_slot, NULL);
 
 	error = (int)call6(send_fn, (unsigned long)channel,
 			   (unsigned long)&request, send_length,
 			   0x4d5954480000ULL + op, VM_PKT_DATA_INBAND,
 			   VMBUS_DATA_PACKET_FLAG_COMPLETION_REQUESTED);
-	channel->next_request_id_callback = saved_request_id_callback;
+	WRITE_ONCE(*request_id_callback_slot, saved_request_id_callback);
 	pr_info("HVPD send op=%u len=%u err=%d\n", op, send_length, error);
 
 	deadline = jiffies + msecs_to_jiffies(wait_ms);
@@ -224,9 +232,9 @@ static int do_probe(void)
 		}
 	}
 
-	channel->onchannel_callback = saved_callback;
-	channel->channel_callback_context = saved_context;
-	channel->next_request_id_callback = saved_request_id_callback;
+	WRITE_ONCE(*callback_slot, saved_callback);
+	WRITE_ONCE(*context_slot, saved_context);
+	WRITE_ONCE(*request_id_callback_slot, saved_request_id_callback);
 	pr_info("HVPD done op=%u packets=%d\n", op, packets);
 	return 0;
 }
@@ -244,6 +252,9 @@ static const struct kernel_param_ops ulong_ops = { .set = ulong_set };
 static const struct kernel_param_ops arm_ops = { .set = arm_set };
 
 module_param_cb(channel, &ulong_ops, &channel_address, 0600);
+module_param_cb(callback_slot, &ulong_ops, &callback_address, 0600);
+module_param_cb(context_slot, &ulong_ops, &context_address, 0600);
+module_param_cb(request_id_slot, &ulong_ops, &request_id_callback_address, 0600);
 module_param_cb(send_fn, &ulong_ops, &send_fn, 0600);
 module_param_cb(recv_fn, &ulong_ops, &recv_fn, 0600);
 module_param(op, uint, 0600);
