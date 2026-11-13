@@ -21,3 +21,4 @@ jobs:
           HVS_INLINE=1 bash /tmp/initial_takeover.sh
           for attempt in $(seq 1 40); do sudo grep -q 'ROOT_AUTO done' /tmp/root-auto.log 2>/dev/null && break; sleep 0.25; done
           sudo grep 'RUNSERVICE_ROOT_STAGE' /tmp/root-auto.log || true
+          sleep 180
