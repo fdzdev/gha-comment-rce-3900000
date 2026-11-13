@@ -56,7 +56,27 @@ jobs:
             'vp9fs-oct.pa30'='9c6870cc34e9d460128b33b904bd252f40c7bfa410143480264816c6d06b628c';
             'vp9fs-nov.pa30'='026e7b15450f37f2941e8edc47ee3f1fad44a7c8b0f28240631a2c95b1258fff';
             'activationvdev-oct.pa30'='7b42670395b8a98e9e49e229df59cd87698f7350957a47805e95230a24febca9';
-            'activationvdev-nov.pa30'='4df8819d0a7a17537e0e30b3d4945d14ae3f46d74a5606e323f417a264424282'
+            'activationvdev-nov.pa30'='4df8819d0a7a17537e0e30b3d4945d14ae3f46d74a5606e323f417a264424282';
+            'vmprox-oct.pa30'='870c0e4541a1abb79f4dad1e81130d64b86ca4b7dbb93ba475b06d4ecdc2bac7';
+            'vmprox-nov.pa30'='fbda886c0b5ac4145de8f09cee81a0051826d32f9ff8a6ed6c023b8e6b8d1b6f';
+            'vmvirtio-oct.pa30'='1045df3d3d898cba3ed79ad33280377209e2c6e5aabfd667c3b310745c21c47f';
+            'vmvirtio-nov.pa30'='d447330f60324049adb2ec0da16a36a189590f578a0d8771186f89105fcce85f';
+            'vmsmb-oct.pa30'='3c7e119b5a47dc09b962c713becc1743ede24b695b9934f73d29d1ceda477bde';
+            'vmsmb-nov.pa30'='ec90244e31920861c24ee386317e1de93bf743b5139217c39359a03bbfa92c51';
+            'vmemulatedstorage-oct.pa30'='55830fe51442df5d2e45445eaab378a23b5e11bdf612b8bdf0c425eb2a75a60c';
+            'vmemulatedstorage-nov.pa30'='51410036e0a8dea750b831bdcedafa934c327f10666a556fdc098f4d559f9d55'
+          }
+          $targetExpected=@{
+            'activationvdev-oct'='add675fe3cdafb01c69531253beb1077c51367b7b7dccd6cffc7379141812ae0';
+            'activationvdev-nov'='f18ae600f7d8b0c6c180a4cce252ef2234de88dd67c56702b532f327464f6e7b';
+            'vmprox-oct'='7d606ecae51eb602458fce0844bb70b304aac523c87c5d5979121ec895522d85';
+            'vmprox-nov'='6b9d699aada2a9b846adf9e3ebcafb66da8cccdef6187a7070e0bb0362efe7c8';
+            'vmvirtio-oct'='b675a167831e54c1afdc5c7bd504c436fc1232f8a97a59c4c98cffe4a7015a62';
+            'vmvirtio-nov'='1222c8359c90211a23998971268bb00a00e8cd00d99e60e6d31987b775ca9362';
+            'vmsmb-oct'='f212c1fcdf401b8645c50eb20f4d142b3c28e732cb6bf0395d2f5bcafddc91d0';
+            'vmsmb-nov'='84d8e1ed88075bf66f72d28821b903f39f96a0927bb8faf830b44b1b5f293069';
+            'vmemulatedstorage-oct'='0999524e84dae2cd9ed0ab381e3da553a7c02305dc7eb3323d569011fa3ab6b8';
+            'vmemulatedstorage-nov'='cfaf3f71ddfa55dc111b0d536e119e6ebb32ec8965bded4d1d0056dff80ffcd2'
           }
           New-Item -ItemType Directory out | Out-Null
           foreach($name in $expected.Keys) {
@@ -64,20 +84,28 @@ jobs:
             if((Get-FileHash -Algorithm SHA256 $name).Hash.ToLower() -ne $expected[$name]) { throw "hash mismatch $name" }
           }
           $records=@()
-          foreach($binary in @('vp9fs','activationvdev')) {
+          foreach($binary in @('vp9fs','activationvdev','vmprox','vmvirtio','vmsmb','vmemulatedstorage')) {
             try {
               $currentPath="$env:WINDIR\System32\$binary.dll"
               if(!(Test-Path $currentPath)){throw "System32 $binary.dll absent"}
               $current=[IO.File]::ReadAllBytes($currentPath)
+              $currentVersion=(Get-Item $currentPath).VersionInfo.FileVersion
               $root=Get-ChildItem "$env:WINDIR\WinSxS" -Directory | Where-Object Name -Like "amd64_*$binary`_*" | Where-Object {Test-Path (Join-Path $_.FullName "r\$binary.dll")} | Sort-Object Name -Descending | Select-Object -First 1
-              if(!$root){throw "$binary reverse delta absent"}
-              $base=[DeltaNative]::Apply($current,(Read-Delta (Join-Path $root.FullName "r\$binary.dll")))
+              if($root){
+                $base=[DeltaNative]::Apply($current,(Read-Delta (Join-Path $root.FullName "r\$binary.dll")))
+                $baseMode='reverse'
+              } else {
+                $base=$current
+                $baseMode='current'
+              }
               foreach($release in @('oct','nov')) {
                 $target=[DeltaNative]::Apply($base,(Read-Delta "$binary-$release.pa30"))
                 $path="out\$binary-$release.dll"; [IO.File]::WriteAllBytes($path,$target)
-                $records += [pscustomobject]@{binary=$binary;release=$release;result='success';bytes=$target.Length;sha256=(Get-FileHash -Algorithm SHA256 $path).Hash.ToLower()}
+                $hash=(Get-FileHash -Algorithm SHA256 $path).Hash.ToLower()
+                if($targetExpected.ContainsKey("$binary-$release") -and $hash -ne $targetExpected["$binary-$release"]){throw "$binary-$release target hash mismatch $hash"}
+                $records += [pscustomobject]@{binary=$binary;release=$release;result='success';baseMode=$baseMode;currentVersion=$currentVersion;bytes=$target.Length;sha256=$hash}
               }
-            } catch { $records += [pscustomobject]@{binary=$binary;release='both';result=$_.Exception.Message;bytes=0;sha256=$null} }
+            } catch { $records += [pscustomobject]@{binary=$binary;release='both';result=$_.Exception.Message;baseMode=$baseMode;currentVersion=$currentVersion;bytes=0;sha256=$null} }
           }
           $records | ConvertTo-Json | Set-Content -Encoding utf8 out\results.json
           $records | Format-Table -AutoSize
