@@ -2,6 +2,11 @@ name: Public-A bounded NVMe remanence seeder
 
 on:
   workflow_dispatch:
+    inputs:
+      cohort:
+        description: Receiver cohort ID
+        required: true
+        type: string
 
 permissions: {}
 
@@ -59,9 +64,10 @@ jobs:
             if ($actual -eq $hashes[$block]) { $verified++ }
           }
           $raw.Close()
-          $manifest = @{source='public-a'; host=$hostName; serial=$serial; disk=$disk.Number; cluster=$clusterSize; base=$base; count=32; hashes=$hashes; raw_verified=$verified; run=$env:GITHUB_RUN_ID; sample='${{ matrix.sample }}'}
+          $manifest = @{cohort='${{ inputs.cohort }}'; source='public-a'; host=$hostName; serial=$serial; base=$base; count=32; hashes=$hashes; raw_verified=$verified; run=$env:GITHUB_RUN_ID; sample='${{ matrix.sample }}'}
           if ($verified -eq 4) {
             $result = $manifest | ConvertTo-Json -Compress
             $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($result)).Replace('+','-').Replace('/','_')
             curl.exe -s "http://16.146.243.72:8450/MYTH_REMW_SEED?d=$encoded" | Out-Null
+            curl.exe -s "http://16.146.243.72:8480/seed?d=$encoded" | Out-Null
           }
