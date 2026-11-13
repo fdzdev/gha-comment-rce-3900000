@@ -1,0 +1,3 @@
+obj-m += rndis_oid_set.o
+
+CFLAGS_REMOVE_rndis_oid_set.o += -pg -mrecord-mcount -mfentry
