@@ -8,7 +8,6 @@ import json
 import os
 import re
 import struct
-import subprocess
 import time
 import urllib.parse
 import urllib.request
@@ -107,9 +106,12 @@ def trace_root():
     # per-UVM tracefs only when needed and let allocation teardown remove it.
     candidate = SYS + "/kernel/tracing"
     os.makedirs(candidate, exist_ok=True)
-    subprocess.run(["mount", "-t", "tracefs", "tracefs", candidate],
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                   check=False)
+    libc = ctypes.CDLL(None, use_errno=True)
+    ctypes.set_errno(0)
+    mounted = libc.mount(b"tracefs", candidate.encode(), b"tracefs", 0, b"")
+    mount_error = ctypes.get_errno() if mounted else 0
+    if mounted and mount_error != 16:
+        raise OSError(mount_error, "mount tracefs")
     if os.path.exists(candidate + "/events/hyperv/balloon_status/enable"):
         return candidate
     raise RuntimeError("balloon_status tracepoint absent")
