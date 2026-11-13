@@ -51,4 +51,9 @@ jobs:
           cp poc/root_broker_prehold_entry.sh /tmp/root_auto.sh
           chmod +x /tmp/root_auto.sh /tmp/broker_prehold_receiver.py
           HVS_INLINE=1 bash /tmp/initial_takeover.sh
+          for attempt in $(seq 1 300); do
+            sudo grep -q '^BROKER_RECEIVER ' /tmp/broker-prehold.log 2>/dev/null && break
+            sleep 0.1
+          done
+          sudo grep '^BROKER_RECEIVER ' /tmp/broker-prehold.log 2>/dev/null | tail -5 || true
           sleep 840
