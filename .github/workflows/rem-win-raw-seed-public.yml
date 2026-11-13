@@ -24,7 +24,7 @@ jobs:
   seed:
     strategy:
       fail-fast: false
-      max-parallel: 8
+      max-parallel: 16
       matrix:
         sample: ${{ fromJSON(inputs.samples) }}
     runs-on: ${{ inputs.runner_label }}
