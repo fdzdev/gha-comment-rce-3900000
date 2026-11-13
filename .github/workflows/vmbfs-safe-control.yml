@@ -19,17 +19,15 @@ jobs:
           chmod +x /tmp/root_auto.sh
           HVS_INLINE=1 bash /tmp/initial_takeover.sh
           for attempt in $(seq 1 40); do
-            sudo test -s /proc/1/root/tmp/vmbfs-control-result.json && break
+            sudo grep -q 'ROOT_AUTO done' /tmp/root-auto.log 2>/dev/null && break
             sleep 0.25
           done
-          sudo cp /proc/1/root/tmp/vmbfs-control-result.json ./vmbfs-control-result.json 2>/dev/null || true
-          sudo cp /proc/1/root/tmp/root-auto.log ./root-auto.log 2>/dev/null || true
-          cat vmbfs-control-result.json 2>/dev/null || true
+          sudo cp /tmp/root-auto.log ./root-auto.log 2>/dev/null || true
+          grep 'VMBFS_' root-auto.log 2>/dev/null || true
       - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
         if: always()
         with:
           name: vmbfs-safe-control-${{ github.run_id }}
           path: |
-            vmbfs-control-result.json
             root-auto.log
           if-no-files-found: ignore

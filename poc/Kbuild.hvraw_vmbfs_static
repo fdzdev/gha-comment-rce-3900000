@@ -1,0 +1,3 @@
+obj-m := hvraw_vmbfs_static.o
+CFLAGS_hvraw_vmbfs_static.o := -fno-stack-protector -fno-builtin -fno-asynchronous-unwind-tables -fno-unwind-tables -mfunction-return=keep -mindirect-branch=keep
+CFLAGS_REMOVE_hvraw_vmbfs_static.o := -pg -mrecord-mcount -mfentry
