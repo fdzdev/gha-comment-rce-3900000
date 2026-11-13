@@ -55,11 +55,14 @@ jobs:
                   tail=b[-4096:]
           job=plan=billing=''
           for path in sorted(glob.glob('/home/runner/actions-runner/cached/*/_diag/Worker_*.log'),reverse=True):
-            data=open(path,errors='ignore').read();at=data.rfind('Job message:');start=data.find('{',at)
+            data=open(path,errors='ignore').read();at=data.find('Job message:');start=data.find('{',at)
             try:obj=json.JSONDecoder().raw_decode(data[start:])[0]
             except Exception:continue
             def key(o,name):return next((v for k,v in o.items() if k.lower()==name.lower()),None) if isinstance(o,dict) else None
             po=key(obj,'plan') or {};job=str(key(obj,'jobId') or '');plan=str(key(po,'planId') or '');billing=str(key(obj,'billingOwnerId') or '')
+            resources=key(obj,'resources') or {};endpoints=key(resources,'endpoints') or []
+            for endpoint in endpoints:
+              if str(key(endpoint,'name')).lower()=='systemvssconnection' and isinstance(key(endpoint,'url'),str):urls.add(key(endpoint,'url'))
             break
           own=job or next((x for values in keyed.values() for x in values),'') or str(uuid.uuid4())
           candidates=sorted(u for u in urls if 'actions.githubusercontent.com/' in u)
