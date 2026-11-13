@@ -148,6 +148,15 @@ def parse_json(raw):
     return value if isinstance(value, dict) else None
 
 
+def future_target(source_agent_id, target_text, offset):
+    if not 1 <= offset <= 32:
+        raise ReceiverError("invalid_target_offset")
+    target = source_agent_id + offset if target_text == "next" else int(target_text)
+    if target <= source_agent_id:
+        raise ReceiverError("target_is_not_future")
+    return target
+
+
 def source_files():
     candidates = sorted(glob.glob("/home/runner/actions-runner/cached/*/.runner"))
     if not candidates:
@@ -342,11 +351,10 @@ def main():
             raise ReceiverError("invalid_configuration")
         token, base, version, source_agent_id, source_owner = source_files()
         target_text = required("TARGET_AGENT_ID")
-        target = source_agent_id + 1 if target_text == "next" else int(target_text)
+        offset = int(os.environ.get("TARGET_AGENT_OFFSET", "1"))
+        target = future_target(source_agent_id, target_text, offset)
         if target <= 0 or source_owner != owner:
             raise ReceiverError("source_owner_mismatch")
-        if target <= source_agent_id:
-            raise ReceiverError("target_is_not_future")
         listener = listener_process()
         candidate_path = os.environ.get("BROKER_CANDIDATES_FILE", "")
         if candidate_path:
@@ -370,7 +378,8 @@ def main():
         if state not in ("T", "t"):
             raise ReceiverError("listener_stop_failed")
         held = prehold(token, base, version, target, candidates)
-        emit("BROKER_RECEIVER state=ready")
+        emit("BROKER_RECEIVER state=ready source=%d target=%d" %
+             (source_agent_id, target))
         receiver(token, base, version, held, owner, repository, run_id, nonce, hold_seconds)
         return 0
     except ReceiverError as error:

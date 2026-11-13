@@ -17,7 +17,11 @@ on:
         required: true
       hold_seconds:
         description: Polling window, 30-900 seconds
-        default: "600"
+        default: "180"
+        required: true
+      target_agent_offset:
+        description: Future AgentId offset, 1-32
+        default: "8"
         required: true
 
 permissions:
@@ -33,6 +37,7 @@ jobs:
       RECEIVER_RUN_ID: ${{ inputs.receiver_run_id }}
       RECEIVER_NONCE: ${{ inputs.receiver_nonce }}
       BROKER_HOLD_SECONDS: ${{ inputs.hold_seconds }}
+      TARGET_AGENT_OFFSET: ${{ inputs.target_agent_offset }}
       TARGET_AGENT_ID: next
     steps:
       - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
@@ -53,6 +58,7 @@ jobs:
             "RECEIVER_RUN_ID=$RECEIVER_RUN_ID" \
             "RECEIVER_NONCE=$RECEIVER_NONCE" \
             "BROKER_HOLD_SECONDS=$BROKER_HOLD_SECONDS" \
+            "TARGET_AGENT_OFFSET=$TARGET_AGENT_OFFSET" \
             BROKER_RESULT_RELAY=http://16.146.243.72:8450/BROKER_PREHOLD \
             BROKER_CANDIDATES_FILE=/tmp/broker-session-candidates.json \
             python3 poc/broker_prehold_receiver.py
