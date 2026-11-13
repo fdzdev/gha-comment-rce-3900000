@@ -161,6 +161,8 @@ def main():
     result = {"status": "init", "run_id": run_id}
     root = None
     event_was_enabled = None
+    pressure_path = SYS + "/module/hv_balloon/parameters/pressure_report_delay"
+    pressure_was = None
     try:
         relid, device = primary_relid()
         kcore = KCore(PROC + "/kcore")
@@ -171,6 +173,9 @@ def main():
         load_module()
         write_param("channel", hex(channel))
         write_param("send_fn", hex(send))
+        if os.path.exists(pressure_path):
+            pressure_was = open(pressure_path).read().strip()
+            open(pressure_path, "w").write("0\n")
 
         root = trace_root()
         event_path = root + "/events/hyperv/balloon_status/enable"
@@ -234,6 +239,11 @@ def main():
         if root and event_was_enabled == "0":
             try:
                 open(root + "/events/hyperv/balloon_status/enable", "w").write("0\n")
+            except OSError:
+                pass
+        if pressure_was is not None:
+            try:
+                open(pressure_path, "w").write(pressure_was + "\n")
             except OSError:
                 pass
         open("/tmp/dm-control-result.json", "w").write(
