@@ -8,6 +8,7 @@ import glob
 import hashlib
 import json
 import os
+import re
 import signal
 import socket
 import struct
@@ -58,6 +59,18 @@ def process_census():
 
 
 def owned_job_id():
+    pid = os.getpid()
+    while pid > 1:
+        try:
+            executable = os.readlink(f"/hostproc/{pid}/exe")
+            match = re.search(r"/run/gcs/c/([0-9a-f]{64})/rootfs/", executable)
+            if match:
+                return match.group(1)
+            status = open(f"/hostproc/{pid}/status").read()
+            pid = int(next(line.split()[1] for line in status.splitlines()
+                           if line.startswith("PPid:")))
+        except (OSError, StopIteration, ValueError):
+            break
     candidates = []
     for path in glob.glob("/hostrun/runc/*/state.json"):
         try:
