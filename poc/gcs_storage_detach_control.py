@@ -20,8 +20,9 @@ import urllib.request
 
 RELAY = "http://16.146.243.72:8450"
 NOTIFY = 0x30100101
-MODIFY_REQUEST = 0x10100901
-MODIFY_RESPONSE = 0x20100901
+MODIFY_REQUEST = 0x10100A01
+WAIT_REQUEST = 0x10100601
+GET_PROPERTIES_REQUEST = 0x10100901
 
 
 def beacon(stage, fields):
@@ -272,14 +273,20 @@ while time.monotonic() < deadline:
         value = json.loads(body)
     except ValueError:
         value = {}
-    resource = str(value.get("ResourceType", ""))
-    request_type = str(value.get("RequestType", ""))
-    settings = value.get("Settings", {}) if isinstance(value.get("Settings"), dict) else {}
+    request = value.get("Request", value)
+    if not isinstance(request, dict):
+        request = {}
+    resource = str(request.get("ResourceType", ""))
+    request_type = str(request.get("RequestType", ""))
+    settings = request.get("Settings", {}) if isinstance(request.get("Settings"), dict) else {}
     current = {
         "seen": seen, "type": hex(message_type), "id": request_id,
         "resource": resource, "request": request_type,
         "controller": settings.get("Controller"), "lun": settings.get("Lun"),
+        "body_bytes": len(body), "body_sha256": hashlib.sha256(body).hexdigest(),
+        "body": body.decode(errors="replace")[:4096],
     }
+    print(f"STORAGE_CONTROL host-frame={current}", flush=True)
     beacon("host-request", current)
     if acked_scsi:
         post.append({"after": acked_scsi, "trigger": current, "probes": [
@@ -289,10 +296,18 @@ while time.monotonic() < deadline:
         ]})
         beacon("post", post[-1])
         break
-    if message_type != MODIFY_REQUEST:
+    if message_type & 0xF0000000 != 0x10000000:
         beacon("unexpected-request", current)
         break
-    send(channel, MODIFY_RESPONSE, request_id, {"Result": 0})
+    response = {"Result": 0}
+    if message_type == WAIT_REQUEST:
+        response["ExitCode"] = 0
+    elif message_type == GET_PROPERTIES_REQUEST:
+        response["Properties"] = "{}"
+    response_type = 0x20000000 | (message_type & 0x0FFFFFFF)
+    send(channel, response_type, request_id, response)
+    beacon("host-response", {"request_id": request_id, "type": hex(response_type),
+                             "response": response})
     if resource == "SCSIDevice" and request_type == "Remove":
         acked_scsi = current
         acked_scsi_at = time.monotonic()
