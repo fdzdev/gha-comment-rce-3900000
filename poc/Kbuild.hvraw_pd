@@ -1,3 +1,4 @@
 obj-m += hvraw_pd.o
 
 CFLAGS_REMOVE_hvraw_pd.o += -pg -mrecord-mcount -mfentry
+CFLAGS_hvraw_pd.o += -fno-stack-protector
