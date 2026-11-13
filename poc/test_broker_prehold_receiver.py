@@ -49,6 +49,7 @@ class FakeRequests:
 class ReceiverTests(unittest.TestCase):
     def test_future_window_offset(self):
         self.assertEqual(MODULE.future_target(1000, "next", 8), 1008)
+        self.assertEqual(MODULE.future_target(1000, "999", 8), 999)
         with self.assertRaisesRegex(MODULE.ReceiverError, "invalid_target_offset"):
             MODULE.future_target(1000, "next", 33)
 

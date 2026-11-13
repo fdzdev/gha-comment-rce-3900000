@@ -154,7 +154,9 @@ def future_target(source_agent_id, target_text, offset):
     if target_text != "next" and not target_text.isdigit():
         raise ReceiverError("invalid_target_agent")
     target = source_agent_id + offset if target_text == "next" else int(target_text)
-    if target <= source_agent_id:
+    if target <= 0:
+        raise ReceiverError("invalid_target_agent")
+    if target_text == "next" and target <= source_agent_id:
         raise ReceiverError("target_is_not_future")
     return target
 
