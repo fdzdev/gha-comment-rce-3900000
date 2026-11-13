@@ -7,6 +7,16 @@ on:
         description: Receiver cohort ID
         required: true
         type: string
+      runner_label:
+        description: Hosted runner image label
+        required: false
+        default: windows-latest
+        type: string
+      samples:
+        description: JSON array of sample indexes
+        required: false
+        default: '[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]'
+        type: string
 
 permissions: {}
 
@@ -16,8 +26,8 @@ jobs:
       fail-fast: false
       max-parallel: 16
       matrix:
-        sample: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
-    runs-on: windows-latest
+        sample: ${{ fromJSON(inputs.samples) }}
+    runs-on: ${{ inputs.runner_label }}
     timeout-minutes: 8
     steps:
       - name: Seed and raw-verify bounded nonce blocks
