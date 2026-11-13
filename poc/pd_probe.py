@@ -223,12 +223,12 @@ def main():
         write_param("wait_ms", 1500)
 
         ops = []
+        # S1: CONFIG with a null MMIO region (pure capability probe).
+        ops.append(run_op(1, {"pa": 0, "len": 4096, "sub": 1}, "config_null"))
+        beacon({"status": "progress", "ops": ops[-1:]})
         # Receiver gate: exact minimum receive PostBatch (count=0,is_recv=1).
         # It reaches the target handler but contains no PD buffer descriptor.
         ops.append(run_op(91, {}, "pd_postbatch_zero_control"))
-        beacon({"status": "progress", "ops": ops[-1:]})
-        # S1: CONFIG with a null MMIO region (pure capability probe).
-        ops.append(run_op(1, {"pa": 0, "len": 4096, "sub": 1}, "config_null"))
         beacon({"status": "progress", "ops": ops[-1:]})
         # S2: OPEN_PROVIDER id 0.
         ops.append(run_op(3, {"prov": 0, "a": 0}, "open_provider0"))
