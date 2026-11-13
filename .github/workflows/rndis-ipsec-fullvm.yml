@@ -29,4 +29,5 @@ jobs:
             probe_rc=99
           fi
           sudo dmesg --notime 2>/dev/null | grep -E 'rndis_oid_(set|query)' | tail -80 || true
+          sudo dmesg --notime 2>/dev/null | tail -8 || true
           echo "IPSEC_DONE probe_rc=$probe_rc"

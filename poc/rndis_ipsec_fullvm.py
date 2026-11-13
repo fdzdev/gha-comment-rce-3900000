@@ -166,7 +166,7 @@ def main():
           (guid, relid, rndis, request_id), flush=True)
     fd = os.open(module, os.O_RDONLY)
     libc = ctypes.CDLL(None, use_errno=True)
-    result = libc.syscall(313, fd, params, 3)
+    result = libc.syscall(313, fd, params, 0)
     print("IPSEC_FINIT result=%d errno=%d" % (result, ctypes.get_errno()), flush=True)
     if result == -1:
         raise SystemExit(1)
