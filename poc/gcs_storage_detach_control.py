@@ -200,23 +200,48 @@ def owned_marker(sector_size):
 
 
 def pending_wait_contexts(gcs_pid, job_id):
-    result = subprocess.run(
-        ["python3", "/tmp/gcs_wait_context_scan.py", str(gcs_pid)],
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=20,
-    )
-    print(result.stdout, end="", flush=True)
-    expected_cid_hash = hashlib.sha256(job_id.encode()).hexdigest()[:12]
     contexts = {}
-    for line in result.stdout.splitlines():
-        match = re.search(
-            r"GCS_WAIT_CONTEXT ids=([0-9,]+) guest_pid=(\d+) timeout=(\d+) "
-            r"cid_hash=([0-9a-f]{12})", line)
-        if not match or match.group(4) != expected_cid_hash:
-            continue
-        ids = [int(value) for value in match.group(1).split(",")]
-        if len(ids) == 1:
-            contexts.setdefault(int(match.group(2)), set()).add(ids[0])
-    return {pid: next(iter(ids)) for pid, ids in contexts.items() if len(ids) == 1}
+    needle = struct.pack("<I", WAIT_REQUEST)
+    scanned = 0
+    with open(f"/hostproc/{gcs_pid}/maps") as maps, open(
+            f"/hostproc/{gcs_pid}/mem", "rb", buffering=0) as memory:
+        for line in maps:
+            match = re.match(r"^([0-9a-f]+)-([0-9a-f]+) (rw)", line)
+            if not match:
+                continue
+            start, end = int(match.group(1), 16), int(match.group(2), 16)
+            if end - start > 512 << 20:
+                continue
+            previous = b""
+            for cursor in range(start, end, 1 << 20):
+                try:
+                    memory.seek(cursor)
+                    data = memory.read(min(1 << 20, end - cursor))
+                except OSError:
+                    break
+                scanned += len(data)
+                block = previous + data
+                offset = 0
+                while True:
+                    offset = block.find(needle, offset)
+                    if offset < 0:
+                        break
+                    if offset + 16 <= len(block):
+                        _, size, request_id = struct.unpack_from("<IIQ", block, offset)
+                        if (16 < size <= 65536 and offset + size <= len(block)
+                                and 0 < request_id < 100000):
+                            try:
+                                value = json.loads(block[offset + 16:offset + size])
+                            except (UnicodeError, ValueError):
+                                value = {}
+                            if (value.get("ContainerId") == job_id and
+                                    isinstance(value.get("ProcessId"), int)):
+                                contexts.setdefault(value["ProcessId"], set()).add(request_id)
+                    offset += 1
+                previous = block[-65551:]
+    exact = {pid: next(iter(ids)) for pid, ids in contexts.items() if len(ids) == 1}
+    print(f"GCS_WAIT_DIRECT bytes={scanned} candidates={contexts} exact={exact}", flush=True)
+    return exact
 
 
 state = process_census()
