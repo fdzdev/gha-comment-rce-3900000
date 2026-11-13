@@ -1,0 +1,5 @@
+name: Stage runtime token
+description: Stage one source-owned runtime credential for an off-box authorization check
+runs:
+  using: node20
+  main: main.js
