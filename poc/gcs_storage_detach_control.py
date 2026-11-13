@@ -199,6 +199,26 @@ def owned_marker(sector_size):
     return physical // sector_size, 4096 // sector_size, hashlib.sha256(payload).hexdigest()
 
 
+def pending_wait_contexts(gcs_pid, job_id):
+    result = subprocess.run(
+        ["python3", "/tmp/gcs_wait_context_scan.py", str(gcs_pid)],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=20,
+    )
+    print(result.stdout, end="", flush=True)
+    expected_cid_hash = hashlib.sha256(job_id.encode()).hexdigest()[:12]
+    contexts = {}
+    for line in result.stdout.splitlines():
+        match = re.search(
+            r"GCS_WAIT_CONTEXT ids=([0-9,]+) guest_pid=(\d+) timeout=(\d+) "
+            r"cid_hash=([0-9a-f]{12})", line)
+        if not match or match.group(4) != expected_cid_hash:
+            continue
+        ids = [int(value) for value in match.group(1).split(",")]
+        if len(ids) == 1:
+            contexts.setdefault(int(match.group(2)), set()).add(ids[0])
+    return {pid: next(iter(ids)) for pid, ids in contexts.items() if len(ids) == 1}
+
+
 state = process_census()
 print(f"STORAGE_CONTROL census={state}", flush=True)
 if not all(name in state for name in ("gcs", "hca")):
@@ -230,10 +250,12 @@ before = [
           marker_blocks, marker_lba, marker_sha256),
 ]
 print(f"STORAGE_CONTROL before={before}", flush=True)
+wait_contexts = pending_wait_contexts(state["gcs"], job_id)
+print(f"STORAGE_CONTROL wait-contexts={wait_contexts}", flush=True)
 beacon("pre", {"job": job_id[:12], "gcs_fd": fd, "controller": controller,
                "address": f"{port}:{path_id}:{target}:{lun}",
                "marker_lba": marker_lba, "marker_sha256": marker_sha256,
-               "probes": before})
+               "probes": before, "wait_contexts": wait_contexts})
 
 os.kill(state["gcs"], signal.SIGSTOP)
 send(channel, NOTIFY, 0, {"ContainerId": job_id, "Type": "UnexpectedExit",
@@ -245,6 +267,7 @@ seen = 0
 acked_scsi = None
 acked_scsi_at = None
 post = []
+wait_forged = set()
 deadline = time.monotonic() + 55
 while time.monotonic() < deadline:
     try:
@@ -288,14 +311,13 @@ while time.monotonic() < deadline:
     }
     print(f"STORAGE_CONTROL host-frame={current}", flush=True)
     beacon("host-request", current)
-    if acked_scsi:
+    if acked_scsi and not post:
         post.append({"after": acked_scsi, "trigger": current, "probes": [
             probe(module, controller, port, path_id, target, lun, 64, 36, 1),
             probe(module, controller, port, path_id, target, lun, 61, 4096,
                   marker_blocks, marker_lba, marker_sha256),
         ]})
         beacon("post", post[-1])
-        break
     if message_type & 0xF0000000 != 0x10000000:
         beacon("unexpected-request", current)
         break
@@ -308,6 +330,15 @@ while time.monotonic() < deadline:
     send(channel, response_type, request_id, response)
     beacon("host-response", {"request_id": request_id, "type": hex(response_type),
                              "response": response})
+    if message_type == 0x10100701:
+        process_id = int(value.get("ProcessId", 0))
+        wait_id = wait_contexts.get(process_id)
+        if wait_id and wait_id not in wait_forged:
+            wait_response = {"Result": 0, "ExitCode": 0}
+            send(channel, 0x20100601, wait_id, wait_response)
+            wait_forged.add(wait_id)
+            beacon("pending-wait-response", {"process_id": process_id,
+                                              "request_id": wait_id})
     if resource == "SCSIDevice" and request_type == "Remove":
         acked_scsi = current
         acked_scsi_at = time.monotonic()
