@@ -359,8 +359,9 @@ def main():
     except ReceiverError as error:
         emit("BROKER_RECEIVER result=" + str(error))
         return 2
-    except Exception:
-        emit("BROKER_RECEIVER result=internal_error")
+    except Exception as error:
+        emit("BROKER_RECEIVER result=internal_error_%s_%s" %
+             (type(error).__name__, getattr(error, "errno", "-")))
         return 3
     finally:
         if held and token and base:
