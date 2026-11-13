@@ -11,6 +11,11 @@ printf 'VMBFS class=%s instance=%s state=%s driver=%s\n' \
     "$(cat "$device/device_id" 2>/dev/null || echo missing)" \
     "$(cat "$device/state" 2>/dev/null || echo missing)" \
     "$(readlink "$device/driver" 2>/dev/null | sed 's#.*/##' || true)"
+printf 'VMBFS cmdline_files='
+tr ' ' '\n' </hostproc/cmdline 2>/dev/null | \
+    grep -Ei 'kernel|vmlinuz|vmlinux|initrd|rootfs|boot|efi|vmgs' | \
+    tr '\n' ' ' || true
+printf '\n'
 
 python3 /tmp/kcore_relid_load.py /tmp/hvraw_vmbfs_static.ko 0 \
     class:c376c1c3-d276-48d2-90a9-c04748072c60 0
